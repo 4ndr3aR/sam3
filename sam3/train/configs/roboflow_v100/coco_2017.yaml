@@ -11,12 +11,12 @@ paths:
   coco_2017_val: /mnt/raid1/dataset/coco/val2017
   coco_2017_anno: /mnt/raid1/dataset/coco/annotations
   experiment_log_dir: /mnt/raid1/repos/sam3/logs/coco_2017
-  bpe_path: /mnt/raid1/repos/sam3/assets/bpe_simple_vocab_16e6.txt.gz
+  bpe_path: /mnt/raid1/repos/sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz
 
 # Roboflow dataset configuration
 coco_train:
-  num_images: null # Note: This is the number of images used for training. If null, all images are used.
-  #num_images: 100 # Note: This is the number of images used for training. If null, all images are used.
+  #num_images: null # Note: This is the number of images used for training. If null, all images are used.
+  num_images: 100 # Note: This is the number of images used for training. If null, all images are used (100k+ for COCO, lower the number for debugging purposes).
   #supercategory: ${all_roboflow_supercategories.${string:${submitit.job_array.task_index}}}
   supercategory: coco_2017_test_finetuning
 
@@ -128,12 +128,12 @@ coco_train:
       - _target_: sam3.train.loss.loss_fns.IABCEMdetr
         weak_loss: False
         weight_dict:
-          loss_ce: 20.0 Another option is 100.0
+          loss_ce: 20.0 # Another option is 100.0
           presence_loss: 20.0
-        pos_weight: 10.0 Another option is 5.0
+        pos_weight: 10.0 # Another option is 5.0
         alpha: 0.25
         gamma: 2
-        use_presence: True  Change
+        use_presence: True  # Change
         pos_focal: false
         pad_n_queries: 200
         pad_scale_pos: 1.0
@@ -147,7 +147,7 @@ coco_train:
     loss_fn_semantic_seg:
       _target_: sam3.train.loss.loss_fns.SemanticSegCriterion
       presence_head: True
-      presence_loss: False  Change
+      presence_loss: False  #Change
       focal: True
       focal_alpha: 0.6
       focal_gamma: 2.0
@@ -225,7 +225,7 @@ scratch:
   scheduler_warmup: 20
   scheduler_cooldown: 20
 
-  val_batch_size: 1
+  val_batch_size: 8
   collate_fn_val:
     _target_: sam3.train.data.collator.collate_fn_api
     _partial_: true
@@ -234,7 +234,7 @@ scratch:
     with_seg_masks: ${scratch.enable_segmentation} # Note: Set this to true if using segmentation masks!
 
   gradient_accumulation_steps: 1
-  train_batch_size: 1
+  train_batch_size: 8
   collate_fn:
     _target_: sam3.train.data.collator.collate_fn_api
     _partial_: true
@@ -438,9 +438,9 @@ submitit:
   port_range: [10000, 65000]
   constraint: null
   # Uncomment for job array configuration
-  job_array:
-    num_tasks: 2
-    task_index: 0
+  #job_array:
+  #  num_tasks: 2
+  #  task_index: 0
 
 # ============================================================================
 # Available Roboflow Supercategories (for reference)
