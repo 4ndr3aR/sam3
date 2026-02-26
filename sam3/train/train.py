@@ -4,8 +4,15 @@
 
 # pyre-unsafe
 
-import logging
+# Run with:
+
+# 1. export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+# 2. ./sam3/train/train.py -c configs/roboflow_v100/coco_2017.yaml &> logs/coco_2017/sam3-train-py-coco-2017-log-`currdate`-`currtime`.txt
+
 import os
+#os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+import logging
 import random
 import sys
 import traceback

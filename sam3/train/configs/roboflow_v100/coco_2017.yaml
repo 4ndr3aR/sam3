@@ -15,8 +15,8 @@ paths:
 
 # Roboflow dataset configuration
 coco_train:
-  #num_images: null # Note: This is the number of images used for training. If null, all images are used.
-  num_images: 100 # Note: This is the number of images used for training. If null, all images are used (100k+ for COCO, lower the number for debugging purposes).
+  num_images: null # Note: This is the number of images used for training. If null, all images are used.
+  #num_images: 100 # Note: This is the number of images used for training. If null, all images are used (100k+ for COCO, lower the number for debugging purposes).
   #supercategory: ${all_roboflow_supercategories.${string:${submitit.job_array.task_index}}}
   supercategory: coco_2017_test_finetuning
 
@@ -64,6 +64,7 @@ coco_train:
   val_transforms:
     - _target_: sam3.train.transforms.basic_for_api.ComposeAPI
       transforms:
+        - _target_: sam3.train.transforms.segmentation.DecodeRle
         - _target_: sam3.train.transforms.basic_for_api.RandomResizeAPI
           sizes: ${scratch.resolution}
           max_size:

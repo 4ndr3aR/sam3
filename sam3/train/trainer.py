@@ -1069,6 +1069,15 @@ class Trainer:
         self.logger = Logger(self.logging_conf)
 
         self.model = instantiate(self.model_conf, _convert_="all")
+        #
+        # After model = build_sam3_image_model(...)
+        #for name, param in self.model.named_parameters():
+        #    if 'vision_backbone' in name:   # or more specific: 'backbone.vision_backbone'
+        #        param.requires_grad = False
+        # Freeze vision and language backbones
+        for name, param in self.model.named_parameters():
+            if 'vision_backbone' in name or 'language_backbone' in name or 'geometry_encoder' in name:
+                param.requires_grad = False
         print_model_summary(self.model)
 
         self.loss = None
