@@ -1075,9 +1075,10 @@ class Trainer:
         #    if 'vision_backbone' in name:   # or more specific: 'backbone.vision_backbone'
         #        param.requires_grad = False
         # Freeze vision and language backbones
-        for name, param in self.model.named_parameters():
-            if 'vision_backbone' in name or 'language_backbone' in name or 'geometry_encoder' in name:
-                param.requires_grad = False
+        #for name, param in self.model.named_parameters():
+        #    if 'vision_backbone' in name or 'language_backbone' in name or 'geometry_encoder' in name:
+        #        param.requires_grad = False
+        #self.model.backbone.eval()
         print_model_summary(self.model)
 
         self.loss = None

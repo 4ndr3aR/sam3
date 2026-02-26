@@ -44,6 +44,8 @@ from sam3.model.vitdet import ViT
 from sam3.model.vl_combiner import SAM3VLBackbone
 from sam3.sam.transformer import RoPEAttention
 
+#HARDCODED_IMG_RESOLUTION=1008
+HARDCODED_IMG_RESOLUTION=672
 
 # Setup TensorFloat-32 for Ampere GPUs if available
 def _setup_tf32() -> None:
@@ -72,7 +74,7 @@ def _create_position_encoding(precompute_resolution=None):
 def _create_vit_backbone(compile_mode=None):
     """Create ViT backbone for visual feature extraction."""
     return ViT(
-        img_size=1008,
+        img_size=HARDCODED_IMG_RESOLUTION,
         pretrain_img_size=336,
         patch_size=14,
         embed_dim=1024,
@@ -182,7 +184,7 @@ def _create_transformer_decoder() -> TransformerDecoder:
         frozen=False,
         interaction_layer=None,
         dac_use_selfatt_ln=True,
-        resolution=1008,
+        resolution=HARDCODED_IMG_RESOLUTION,
         stride=14,
         use_act_checkpoint=True,
         presence_token=True,
@@ -418,7 +420,7 @@ def _create_tracker_transformer():
         pos_enc_at_input=True,
         layer=encoder_layer,
         num_layers=4,
-        use_act_checkpoint=False,
+        use_act_checkpoint=True,
     )
 
     # Transformer wrapper
@@ -503,7 +505,7 @@ def _create_vision_backbone(
 ) -> Sam3DualViTDetNeck:
     """Create SAM3 visual backbone with ViT and neck."""
     # Position encoding
-    position_encoding = _create_position_encoding(precompute_resolution=1008)
+    position_encoding = _create_position_encoding(precompute_resolution=HARDCODED_IMG_RESOLUTION)
     # ViT backbone
     vit_backbone: ViT = _create_vit_backbone(compile_mode=compile_mode)
     vit_neck: Sam3DualViTDetNeck = _create_vit_neck(
@@ -532,6 +534,15 @@ def _load_checkpoint(model, checkpoint_path):
     sam3_image_ckpt = {
         k.replace("detector.", ""): v for k, v in ckpt.items() if "detector" in k
     }
+
+    # SUGGESTED BY CLAUDE (fingers crossed...)
+    # Remove freqs_cis buffers — they are resolution-dependent and will be
+    # recomputed correctly by the model for the current img_size.
+    sam3_image_ckpt = {
+        k: v for k, v in sam3_image_ckpt.items() if "freqs_cis" not in k
+    }
+    
+
     if model.inst_interactive_predictor is not None:
         sam3_image_ckpt.update(
             {
@@ -561,6 +572,7 @@ def build_sam3_image_model(
     bpe_path=None,
     device="cuda" if torch.cuda.is_available() else "cpu",
     eval_mode=True,
+    freeze_backbone=False,
     checkpoint_path=None,
     load_from_HF=True,
     enable_segmentation=True,
@@ -629,6 +641,16 @@ def build_sam3_image_model(
         inst_predictor,
         eval_mode,
     )
+
+    if freeze_backbone:
+        #for name, param in self.model.named_parameters():
+        #    if 'vision_backbone' in name or 'language_backbone' in name or 'geometry_encoder' in name:
+        #        param.requires_grad = False
+        for param in model.backbone.parameters():
+            param.requires_grad = False
+        model.backbone.eval()
+
+
     if load_from_HF and checkpoint_path is None:
         checkpoint_path = download_ckpt_from_hf()
     # Load checkpoint if provided

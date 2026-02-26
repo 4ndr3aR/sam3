@@ -196,9 +196,10 @@ scratch:
   scale_by_find_batch_size: True
 
   # Image processing parameters
-  resolution: 1008
+  #resolution: 1008
+  resolution: 672
   consistent_transform: False
-  max_ann_per_img: 200
+  max_ann_per_img: 100
 
   # Normalization parameters
   train_norm_mean: [0.5, 0.5, 0.5]
@@ -229,6 +230,8 @@ scratch:
   val_batch_size: 1
   collate_fn_val:
     _target_: sam3.train.data.collator.collate_fn_api
+    #_target_: sam3.train.data.collator.collate_fn_api_with_chunking
+    #num_chunks: ${scratch.gradient_accumulation_steps}
     _partial_: true
     repeats: ${scratch.hybrid_repeats}
     dict_key: coco100
@@ -238,6 +241,8 @@ scratch:
   train_batch_size: 1
   collate_fn:
     _target_: sam3.train.data.collator.collate_fn_api
+    #_target_: sam3.train.data.collator.collate_fn_api_with_chunking
+    #num_chunks: ${scratch.gradient_accumulation_steps}
     _partial_: true
     repeats: ${scratch.hybrid_repeats}
     dict_key: all
@@ -278,10 +283,10 @@ trainer:
         limit_ids: ${coco_train.num_images}
         transforms: ${coco_train.train_transforms}
         load_segmentation: ${scratch.enable_segmentation}
-        max_ann_per_img: 500000
+        max_ann_per_img: 100
         multiplier: 1
-        max_train_queries: 50000
-        max_val_queries: 50000
+        max_train_queries: 100
+        max_val_queries: 100
         training: true
         use_caching: False
         img_folder: ${paths.coco_2017_train}/
@@ -304,14 +309,14 @@ trainer:
         coco_json_loader:
           _target_: sam3.train.data.coco_json_loaders.COCO_FROM_JSON
           include_negatives: true
-          category_chunk_size: 2 # Note: You can increase this based on the memory of your GPU.
+          category_chunk_size: 4 # Note: You can increase this based on the memory of your GPU.
           _partial_: true
         img_folder: ${paths.coco_2017_val}/
         ann_file: ${paths.coco_2017_anno}/instances_val2017.json
         #img_folder: ${paths.coco_2017_root}/${roboflow_train.supercategory}/test/
         #ann_file: ${paths.coco_2017_root}/${roboflow_train.supercategory}/test/_annotations.coco.json
         transforms: ${coco_train.val_transforms}
-        max_ann_per_img: 100000
+        max_ann_per_img: 100
         multiplier: 1
         training: false
 
@@ -326,8 +331,9 @@ trainer:
   model:
     _target_: sam3.model_builder.build_sam3_image_model
     bpe_path: ${paths.bpe_path}
-    device: cpus
+    device: cuda
     eval_mode: false
+    freeze_backbone: true
     enable_segmentation: ${scratch.enable_segmentation} # Warning: Enable this if using segmentation.
 
   meters:
