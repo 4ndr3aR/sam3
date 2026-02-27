@@ -266,9 +266,9 @@ class ProgressMeter:
             )
             for name, meter in self.real_meters.items()
         ]
-        logging.info(" | ".join(entries))
+        logging.info(" | ".join(entries) + '\n')
         if enable_print:
-            print(" | ".join(entries))
+            print(" | ".join(entries) + '\n')
 
     def _get_batch_fmtstr(self, num_batches):
         num_digits = len(str(num_batches // 1))
