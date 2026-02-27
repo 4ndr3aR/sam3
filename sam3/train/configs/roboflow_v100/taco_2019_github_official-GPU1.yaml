@@ -227,26 +227,29 @@ scratch:
   scheduler_warmup: 20
   scheduler_cooldown: 20
 
-  val_batch_size: 1
-  collate_fn_val:
-    _target_: sam3.train.data.collator.collate_fn_api
-    #_target_: sam3.train.data.collator.collate_fn_api_with_chunking
-    #num_chunks: ${scratch.gradient_accumulation_steps}
-    _partial_: true
-    repeats: ${scratch.hybrid_repeats}
-    dict_key: coco100
-    with_seg_masks: ${scratch.enable_segmentation} # Note: Set this to true if using segmentation masks!
+  global_batch_size: 8
+  gradient_accumulation_steps: 8
 
-  gradient_accumulation_steps: 1
-  train_batch_size: 1
+  train_batch_size: ${scratch.global_batch_size}
   collate_fn:
-    _target_: sam3.train.data.collator.collate_fn_api
-    #_target_: sam3.train.data.collator.collate_fn_api_with_chunking
-    #num_chunks: ${scratch.gradient_accumulation_steps}
+    #_target_: sam3.train.data.collator.collate_fn_api
+    _target_: sam3.train.data.collator.collate_fn_api_with_chunking
+    num_chunks: ${scratch.gradient_accumulation_steps}
     _partial_: true
     repeats: ${scratch.hybrid_repeats}
     dict_key: all
     with_seg_masks: ${scratch.enable_segmentation} # Note: Set this to true if using segmentation masks!
+
+  val_batch_size: ${scratch.global_batch_size}
+  collate_fn_val:
+    #_target_: sam3.train.data.collator.collate_fn_api
+    _target_: sam3.train.data.collator.collate_fn_api_with_chunking
+    num_chunks: ${scratch.gradient_accumulation_steps}
+    _partial_: true
+    repeats: ${scratch.hybrid_repeats}
+    dict_key: coco100 # what the hell is this?!
+    with_seg_masks: ${scratch.enable_segmentation} # Note: Set this to true if using segmentation masks!
+
 
 # ============================================================================
 # Trainer Configuration

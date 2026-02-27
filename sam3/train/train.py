@@ -6,6 +6,7 @@
 
 # Run with:
 
+# 0. export CUDA_VISIBLE_DEVICES=1 # (optional)
 # 1. export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 # 2. ./sam3/train/train.py -c configs/roboflow_v100/coco_2017.yaml &> logs/coco_2017/sam3-train-py-coco-2017-log-`currdate`-`currtime`.txt
 
