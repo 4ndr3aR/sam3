@@ -240,11 +240,12 @@ scratch:
     dict_key: all
     with_seg_masks: ${scratch.enable_segmentation} # Note: Set this to true if using segmentation masks!
 
+  #val_batch_size: 1
   val_batch_size: ${scratch.global_batch_size}
   collate_fn_val:
-    #_target_: sam3.train.data.collator.collate_fn_api
-    _target_: sam3.train.data.collator.collate_fn_api_with_chunking
-    num_chunks: ${scratch.gradient_accumulation_steps}
+    _target_: sam3.train.data.collator.collate_fn_api
+    #_target_: sam3.train.data.collator.collate_fn_api_with_chunking
+    #num_chunks: ${scratch.gradient_accumulation_steps}
     _partial_: true
     repeats: ${scratch.hybrid_repeats}
     dict_key: coco100 # what the hell is this?!
@@ -260,7 +261,7 @@ trainer:
   _target_: sam3.train.trainer.Trainer
   skip_saving_ckpts: false
   empty_gpu_mem_cache_after_eval: True
-  skip_first_val: false
+  skip_first_val: true
   max_epochs: 50
   accelerator: cuda
   seed_value: 123
