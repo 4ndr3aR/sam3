@@ -53,8 +53,10 @@ def _setup_tf32() -> None:
     if torch.cuda.is_available():
         device_props = torch.cuda.get_device_properties(0)
         if device_props.major >= 8:
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            #torch.backends.cuda.matmul.allow_tf32 = True
+            #torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cuda.matmul.fp32_precision = 'tf32'  # or 'ieee' for full precision
+            torch.backends.cudnn.conv.fp32_precision = 'tf32'   # or 'ieee'
 
 
 _setup_tf32()
