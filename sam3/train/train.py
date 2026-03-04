@@ -13,6 +13,9 @@
 import os
 #os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')	# because of: "RuntimeError: received 0 items of ancdata" (fd exhaustion)
+
 import logging
 import random
 import sys
