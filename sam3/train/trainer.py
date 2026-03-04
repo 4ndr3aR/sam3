@@ -797,6 +797,13 @@ class Trainer:
 
         # Model training loop
         self.model.train()
+
+        # Keep frozen backbone in eval mode so BN/Dropout behave correctly
+        if True: # freeze_backbone:
+            for param in unwrap_ddp_if_wrapped(self.model).backbone.parameters():
+                param.requires_grad = False
+        unwrap_ddp_if_wrapped(self.model).backbone.eval()
+
         end = time.time()
 
         for data_iter, batch in enumerate(train_loader):

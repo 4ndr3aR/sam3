@@ -44,8 +44,11 @@ from sam3.model.vitdet import ViT
 from sam3.model.vl_combiner import SAM3VLBackbone
 from sam3.sam.transformer import RoPEAttention
 
-#HARDCODED_IMG_RESOLUTION=1008
-HARDCODED_IMG_RESOLUTION=672
+# img resolution... this also makes CUDA memory explode (because of attention), but downscaling everything is a pain in the ass
+HARDCODED_IMG_RESOLUTION=1008
+#HARDCODED_IMG_RESOLUTION=672
+# (see config) max predicted objects... this is what makes CUDA memory explode (because of attention). With 200 @ 1008px and segmentation=True, OOM on a 48 Gb GPU.
+HARDCODED_MAX_QUERIES=50
 
 # Setup TensorFloat-32 for Ampere GPUs if available
 def _setup_tf32() -> None:
@@ -176,7 +179,7 @@ def _create_transformer_decoder() -> TransformerDecoder:
     decoder = TransformerDecoder(
         layer=decoder_layer,
         num_layers=6,
-        num_queries=200,
+        num_queries=HARDCODED_MAX_QUERIES,
         return_intermediate=True,
         box_refine=True,
         num_o2m_queries=0,
@@ -537,12 +540,35 @@ def _load_checkpoint(model, checkpoint_path):
         k.replace("detector.", ""): v for k, v in ckpt.items() if "detector" in k
     }
 
+    '''
     # SUGGESTED BY CLAUDE (fingers crossed...)
     # Remove freqs_cis buffers — they are resolution-dependent and will be
     # recomputed correctly by the model for the current img_size.
     sam3_image_ckpt = {
         k: v for k, v in sam3_image_ckpt.items() if "freqs_cis" not in k
     }
+    '''
+
+
+    # SUGGESTED BY CLAUDE (fingers crossed...)
+    # Handle query count mismatch: slice checkpoint tensors to match model shape.
+    # This is better than random init — we keep the first N pretrained queries.
+    model_state = model.state_dict()
+    for key in list(sam3_image_ckpt.keys()):
+        if key in model_state:
+            ckpt_shape = sam3_image_ckpt[key].shape
+            model_shape = model_state[key].shape
+            if ckpt_shape != model_shape:
+                if all(c >= m for c, m in zip(ckpt_shape, model_shape)):
+                    # Checkpoint is larger: slice each dimension down to model size
+                    slices = tuple(slice(0, s) for s in model_shape)
+                    sam3_image_ckpt[key] = sam3_image_ckpt[key][slices]
+                    print(f"Sliced checkpoint key '{key}': {ckpt_shape} -> {model_shape}")
+                else:
+                    # Checkpoint is smaller than model (shouldn't happen here, but
+                    # drop it and let the model use its own init rather than crash)
+                    print(f"Dropping checkpoint key '{key}': ckpt {ckpt_shape} < model {model_shape}")
+                    del sam3_image_ckpt[key]
     
 
     if model.inst_interactive_predictor is not None:
