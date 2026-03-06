@@ -18,7 +18,7 @@ coco_train:
   num_images: null # Note: This is the number of images used for training. If null, all images are used.
   #num_images: 100 # Note: This is the number of images used for training. If null, all images are used (100k+ for COCO, lower the number for debugging purposes).
   supercategory: statuario-10k-finetuning
-  max_queries: 50 # max predicted objects... this is what makes CUDA memory explode (because of attention). With 200 @ 1008px and segmentation=True, OOM on a 48 Gb GPU.
+  max_queries: 70 # max predicted objects... this is what makes CUDA memory explode (because of attention). With 200 @ 1008px and segmentation=True, OOM on a 48 Gb GPU.
   #hardcoded_img_resolution: 672
   hardcoded_img_resolution: 1008 # (see model_builder.py) img resolution... this also makes CUDA memory explode (because of attention), but downscaling everything is a pain in the ass
 
@@ -229,7 +229,7 @@ scratch:
   scheduler_warmup: 20
   scheduler_cooldown: 20
 
-  global_batch_size: 24
+  global_batch_size: 72
   gradient_accumulation_steps: 8
 
   train_batch_size: ${scratch.global_batch_size}
@@ -351,7 +351,7 @@ trainer:
           maxdets: ${coco_train.max_queries}
           pred_file_evaluators:
             - _target_: sam3.eval.coco_eval_offline.CocoEvaluatorOfflineWithPredFileEvaluators
-              gt_path: ${paths.statuario-10k_anno}/annotations-test.json
+              gt_path: ${paths.statuario-10k_anno}/annotations-valid.json
               tide: False
               iou_type: "bbox"
 
