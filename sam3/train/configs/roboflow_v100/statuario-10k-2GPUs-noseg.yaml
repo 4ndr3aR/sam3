@@ -6,9 +6,9 @@ defaults:
 # Paths Configuration (Chage this to your own paths)
 # ============================================================================
 paths:
-  statuario-10k_root: /mnt/raid1/dataset/surface-damage-segmentation/statuario-10k/kaggle-images/images
-  statuario-10k_train: /mnt/raid1/dataset/surface-damage-segmentation/statuario-10k/kaggle-images/images
-  statuario-10k_val: /mnt/raid1/dataset/surface-damage-segmentation/statuario-10k/kaggle-images/images
+  statuario-10k_root: /mnt/raid1/dataset/surface-damage-segmentation/statuario-10k
+  statuario-10k_train: /mnt/raid1/dataset/surface-damage-segmentation/statuario-10k
+  statuario-10k_val: /mnt/raid1/dataset/surface-damage-segmentation/statuario-10k
   statuario-10k_anno: /mnt/raid1/dataset/surface-damage-segmentation/statuario-10k
   experiment_log_dir: /mnt/raid1/repos/sam3/logs/statuario-10k
   bpe_path: /mnt/raid1/repos/sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz
