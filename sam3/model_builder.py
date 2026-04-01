@@ -656,6 +656,12 @@ def build_sam3_image_model(
             "sam3", "assets/bpe_simple_vocab_16e6.txt.gz"
         )
 
+    if compile:
+        if torch.cuda.is_available():
+            device_cap = torch.cuda.get_device_capability()
+            if device_cap in ((7, 0), (8, 0), (9, 0)):
+                warnings.warn("GPU is not NVIDIA V100, A100, or H100. torch.compile speedup may be lower than optimal.")
+        
     # Create visual components
     compile_mode = "default" if compile else None
     vision_encoder = _create_vision_backbone(

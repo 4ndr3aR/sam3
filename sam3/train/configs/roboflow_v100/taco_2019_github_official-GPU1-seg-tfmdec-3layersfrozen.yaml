@@ -10,7 +10,7 @@ paths:
   taco_2019_train: /mnt/raid1/dataset/instance-segmentation/TACO-Trash-Annotations-in-COntext-Dataset-Github-Official
   taco_2019_val: /mnt/raid1/dataset/instance-segmentation/TACO-Trash-Annotations-in-COntext-Dataset-Github-Official
   taco_2019_anno: /mnt/raid1/dataset/instance-segmentation/TACO-Trash-Annotations-in-COntext-Dataset-Github-Official
-  experiment_log_dir: /mnt/raid1/repos/sam3/logs/taco_2019
+  experiment_log_dir: /mnt/raid1/repos/sam3/logs/taco_2019-GPU1-seg-bs8-at-1008px
   bpe_path: /mnt/raid1/repos/sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz
 
 # Roboflow dataset configuration
@@ -342,6 +342,8 @@ trainer:
     eval_mode: false
     freeze_backbone: true
     enable_segmentation: ${scratch.enable_segmentation} # Warning: Enable this if using segmentation.
+    compile: true
+    freeze_first_n_decoder_layers: 3
 
   meters:
     val:
