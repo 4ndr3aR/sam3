@@ -160,8 +160,14 @@ def _create_transformer_encoder() -> TransformerEncoderFusion:
     return encoder
 
 
-def _create_transformer_decoder() -> TransformerDecoder:
-    """Create transformer decoder with its layer."""
+def _create_transformer_decoder(freeze_first_n_layers: int = 0) -> TransformerDecoder:
+    """Create transformer decoder with its layer.
+
+    Args:
+        freeze_first_n_layers: Number of first decoder layers to freeze during fine-tuning.
+                               Set to 0 to train all layers. Default is 0.
+                               Recommended: 3 for memory-efficient fine-tuning with segmentation head unfrozen.
+    """
     decoder_layer = TransformerDecoderLayer(
         activation="relu",
         d_model=256,
@@ -194,6 +200,19 @@ def _create_transformer_decoder() -> TransformerDecoder:
         use_act_checkpoint=True,
         presence_token=True,
     )
+
+    # Freeze the first n decoder layers for memory-efficient fine-tuning
+    if freeze_first_n_layers > 0:
+        assert freeze_first_n_layers < decoder.num_layers, (
+            f"freeze_first_n_layers ({freeze_first_n_layers}) must be less than num_layers ({decoder.num_layers})"
+        )
+        print(f"[Model Builder] Freezing first {freeze_first_n_layers} of {decoder.num_layers} decoder layers "
+              f"(will train layers {freeze_first_n_layers+1}-{decoder.num_layers})")
+        for i in range(freeze_first_n_layers):
+            decoder.layers[i].eval()
+            for param in decoder.layers[i].parameters():
+                param.requires_grad = False
+
     return decoder
 
 
@@ -522,10 +541,16 @@ def _create_vision_backbone(
     return vit_neck
 
 
-def _create_sam3_transformer(has_presence_token: bool = True) -> TransformerWrapper:
-    """Create SAM3 transformer encoder and decoder."""
+def _create_sam3_transformer(has_presence_token: bool = True, freeze_first_n_decoder_layers: int = 0) -> TransformerWrapper:
+    """Create SAM3 transformer encoder and decoder.
+
+    Args:
+        has_presence_token: Whether to include presence token in decoder.
+        freeze_first_n_decoder_layers: Number of first decoder layers to freeze.
+                                       Set to 3 for memory-efficient fine-tuning.
+    """
     encoder: TransformerEncoderFusion = _create_transformer_encoder()
-    decoder: TransformerDecoder = _create_transformer_decoder()
+    decoder: TransformerDecoder = _create_transformer_decoder(freeze_first_n_layers=freeze_first_n_decoder_layers)
 
     return TransformerWrapper(encoder=encoder, decoder=decoder, d_model=256)
 
@@ -606,6 +631,7 @@ def build_sam3_image_model(
     enable_segmentation=True,
     enable_inst_interactivity=False,
     compile=False,
+    freeze_first_n_decoder_layers: int = 0,
 ):
     """
     Build SAM3 image model
@@ -617,7 +643,10 @@ def build_sam3_image_model(
         checkpoint_path: Optional path to model checkpoint
         enable_segmentation: Whether to enable segmentation head
         enable_inst_interactivity: Whether to enable instance interactivity (SAM 1 task)
-        compile_mode: To enable compilation, set to "default"
+        compile: Whether to compile the model for faster inference
+        freeze_first_n_decoder_layers: Number of first decoder layers to freeze during fine-tuning.
+                                       Set to 3 for memory-efficient fine-tuning with segmentation head unfrozen.
+                                       Default is 0 (train all decoder layers).
 
     Returns:
         A SAM3 image model
@@ -640,7 +669,7 @@ def build_sam3_image_model(
     backbone = _create_vl_backbone(vision_encoder, text_encoder)
 
     # Create transformer components
-    transformer = _create_sam3_transformer()
+    transformer = _create_sam3_transformer(freeze_first_n_decoder_layers=freeze_first_n_decoder_layers)
 
     # Create dot product scoring
     dot_prod_scoring = _create_dot_product_scoring()
