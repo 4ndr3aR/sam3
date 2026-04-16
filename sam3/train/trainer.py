@@ -221,6 +221,7 @@ class Trainer:
         self.time_elapsed_meter = DurationMeter("Time Elapsed", self.device, ":.2f")
 
         if self.checkpoint_conf.resume_from is not None:
+            logging.info(f"Resuming from a saved checkpoint...")
             assert os.path.exists(self.checkpoint_conf.resume_from), (
                 f"The 'resume_from' checkpoint {self.checkpoint_conf.resume_from} does not exist!"
             )
@@ -230,10 +231,14 @@ class Trainer:
                 # if there is not a checkpoint to resume from already there
                 makedir(self.checkpoint_conf.save_dir)
                 g_pathmgr.copy(self.checkpoint_conf.resume_from, dst)
+            logging.info(f"About to hit another barrier while resuming...")
             barrier()
 
+        logging.info(f"About to load the checkpoint...")
         self.load_checkpoint()
+        logging.info(f"About to setup the DDP training...")
         self._setup_ddp_distributed_training(distributed, accelerator)
+        logging.info(f"About to hit another barrier after having set up the DDP training...")
         barrier()
 
     def _setup_timers(self):
@@ -574,6 +579,7 @@ class Trainer:
             self.run_train()
 
     def _setup_dataloaders(self):
+        logging.info(f"Setting up dataloaders...")
         self.train_dataset = None
         self.val_dataset = None
 
@@ -585,8 +591,10 @@ class Trainer:
 
     def run_train(self):
         while self.epoch < self.max_epochs:
+            logging.info(f"Starting epoch {self.epoch}")
             dataloader = self.train_dataset.get_loader(epoch=int(self.epoch))
             barrier()
+            logging.info(f"Epoch {self.epoch} passed the multiprocessing barrier...")
             outs = self.train_epoch(dataloader)
             self.logger.log_dict(outs, self.epoch)  # Logged only on rank 0
 

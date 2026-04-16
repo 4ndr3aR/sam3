@@ -56,17 +56,21 @@ def handle_custom_resolving(cfg):
 
 def single_proc_run(local_rank, main_port, cfg, world_size):
     """Single GPU process"""
+    print(f"Entered single proc at rank {local_rank}")
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(main_port)
     os.environ["RANK"] = str(local_rank)
     os.environ["LOCAL_RANK"] = str(local_rank)
     os.environ["WORLD_SIZE"] = str(world_size)
     try:
+        print(f"Trying to register omegaconf resolvers (whatever they may be) for rank {local_rank}")
         register_omegaconf_resolvers()
     except Exception as e:
         logging.info(e)
 
+    print(f"Instantiating trainer for rank {local_rank}")
     trainer = instantiate(cfg.trainer, _recursive_=False)
+    print(f"Running trainer for rank {local_rank}")
     trainer.run()
 
 
