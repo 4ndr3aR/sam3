@@ -169,6 +169,9 @@ class Trainer:
         empty_gpu_mem_cache_after_eval: bool = True,
         gradient_accumulation_steps: int = 1,
     ):
+        import logging as _logging   # re-import to un-shadow the parameter
+        self._logging = _logging
+
         self._setup_env_variables(env_variables)
         self._setup_timers()
 
@@ -221,7 +224,7 @@ class Trainer:
         self.time_elapsed_meter = DurationMeter("Time Elapsed", self.device, ":.2f")
 
         if self.checkpoint_conf.resume_from is not None:
-            logging.info(f"Resuming from a saved checkpoint...")
+            self._logging.info(f"Resuming from a saved checkpoint...")
             assert os.path.exists(self.checkpoint_conf.resume_from), (
                 f"The 'resume_from' checkpoint {self.checkpoint_conf.resume_from} does not exist!"
             )
@@ -231,14 +234,14 @@ class Trainer:
                 # if there is not a checkpoint to resume from already there
                 makedir(self.checkpoint_conf.save_dir)
                 g_pathmgr.copy(self.checkpoint_conf.resume_from, dst)
-            logging.info(f"About to hit another barrier while resuming...")
+            self._logging.info(f"About to hit another barrier while resuming...")
             barrier()
 
-        logging.info(f"About to load the checkpoint...")
+        self._logging.info(f"About to load the checkpoint...")
         self.load_checkpoint()
-        logging.info(f"About to setup the DDP training...")
+        self._logging.info(f"About to setup the DDP training...")
         self._setup_ddp_distributed_training(distributed, accelerator)
-        logging.info(f"About to hit another barrier after having set up the DDP training...")
+        self._logging.info(f"About to hit another barrier after having set up the DDP training...")
         barrier()
 
     def _setup_timers(self):
@@ -323,27 +326,27 @@ class Trainer:
             amp_type = get_amp_type(distributed_conf.comms_dtype)
             if amp_type == torch.bfloat16:
                 hook = ddp_comm_hooks.default_hooks.bf16_compress_hook
-                logging.info("Enabling bfloat16 grad communication")
+                self._logging.info("Enabling bfloat16 grad communication")
             else:
                 hook = ddp_comm_hooks.default_hooks.fp16_compress_hook
-                logging.info("Enabling fp16 grad communication")
+                self._logging.info("Enabling fp16 grad communication")
             process_group = None
             self.model.register_comm_hook(process_group, hook)
 
     def _move_to_device(self):
-        logging.info(
+        self._logging.info(
             f"Moving components to device {self.device} and local rank {self.local_rank}."
         )
 
         self.model.to(self.device)
 
-        logging.info(
+        self._logging.info(
             f"Done moving components to device {self.device} and local rank {self.local_rank}."
         )
 
     def save_checkpoint(self, epoch, checkpoint_names=None):
         if self.skip_saving_ckpts:
-            logging.info(
+            self._logging.info(
                 "skip_saving_ckpts is set to True. So, no checkpoints have been saved."
             )
             return
@@ -439,13 +442,13 @@ class Trainer:
             self.checkpoint_conf.model_weight_initializer
         )
         if model_weight_initializer is not None:
-            logging.info(
+            self._logging.info(
                 f"Loading pretrained checkpoint from {self.checkpoint_conf.model_weight_initializer}"
             )
             self.model = model_weight_initializer(model=self.model)
 
     def _load_resuming_checkpoint(self, ckpt_path: str):
-        logging.info(f"Resuming training from {ckpt_path}")
+        self._logging.info(f"Resuming training from {ckpt_path}")
 
         with g_pathmgr.open(ckpt_path, "rb") as f:
             checkpoint = torch.load(f, map_location="cpu")
@@ -564,10 +567,10 @@ class Trainer:
         assert self.mode in ["train", "train_only", "val"]
         if self.mode == "train":
             if self.epoch > 0:
-                logging.info(f"Resuming training from epoch: {self.epoch}")
+                self._logging.info(f"Resuming training from epoch: {self.epoch}")
                 # resuming from a checkpoint
                 if self.is_intermediate_val_epoch(self.epoch - 1):
-                    logging.info("Running previous val epoch")
+                    self._logging.info("Running previous val epoch")
                     self.epoch -= 1
                     self.run_val()
                     self.epoch += 1
@@ -579,7 +582,7 @@ class Trainer:
             self.run_train()
 
     def _setup_dataloaders(self):
-        logging.info(f"Setting up dataloaders...")
+        self._logging.info(f"Setting up dataloaders...")
         self.train_dataset = None
         self.val_dataset = None
 
@@ -591,10 +594,10 @@ class Trainer:
 
     def run_train(self):
         while self.epoch < self.max_epochs:
-            logging.info(f"Starting epoch {self.epoch}")
+            self._logging.info(f"Starting epoch {self.epoch}")
             dataloader = self.train_dataset.get_loader(epoch=int(self.epoch))
             barrier()
-            logging.info(f"Epoch {self.epoch} passed the multiprocessing barrier...")
+            self._logging.info(f"Epoch {self.epoch} passed the multiprocessing barrier...")
             outs = self.train_epoch(dataloader)
             self.logger.log_dict(outs, self.epoch)  # Logged only on rank 0
 
@@ -761,7 +764,7 @@ class Trainer:
         for phase in curr_phases:
             out_dict.update(self._get_trainer_state(phase))
         self._reset_meters(curr_phases)
-        logging.info(f"Meters: {out_dict}")
+        self._logging.info(f"Meters: {out_dict}")
         return out_dict
 
     def _get_trainer_state(self, phase):
@@ -834,7 +837,7 @@ class Trainer:
                         self.where, step=int(exact_epoch * iters_per_epoch)
                     )
                 else:
-                    logging.warning(
+                    self._logging.warning(
                         f"Skipping scheduler update since the training is at the end, i.e, {self.where} of [0,1]."
                     )
 
@@ -904,7 +907,7 @@ class Trainer:
         for k, v in extra_loss_mts.items():
             out_dict[k] = v.avg
         out_dict.update(self._get_trainer_state(phase))
-        logging.info(f"Losses and meters: {out_dict}")
+        self._logging.info(f"Losses and meters: {out_dict}")
         self._reset_meters([phase])
         return out_dict
 
@@ -971,7 +974,7 @@ class Trainer:
 
                 if not math.isfinite(loss.item()):
                     error_msg = f"Loss is {loss.item()}, attempting to stop training"
-                    logging.error(error_msg)
+                    self._logging.error(error_msg)
                     if raise_on_error:
                         raise FloatingPointError(error_msg)
                     else:
@@ -987,7 +990,7 @@ class Trainer:
                     extra_loss_mts[extra_loss_key].update(extra_loss.item(), batch_size)
 
     def _log_meters_and_save_best_ckpts(self, phases: List[str]):
-        logging.info("Synchronizing meters")
+        self._logging.info("Synchronizing meters")
         out_dict = {}
         checkpoint_save_keys = []
         for key, meter in self._get_meters(phases).items():
@@ -1045,7 +1048,7 @@ class Trainer:
             self.steps[phase],
         )
 
-        logging.info(f"Estimated time remaining: {human_readable_time(time_remaining)}")
+        self._logging.info(f"Estimated time remaining: {human_readable_time(time_remaining)}")
 
     def _reset_meters(self, phases: str) -> None:
         for meter in self._get_meters(phases).values():
@@ -1083,7 +1086,7 @@ class Trainer:
         # Additional checks on the sanity of the config for val datasets
         self._check_val_key_match(val_keys, phase=val_phase)
 
-        logging.info("Setting up components: Model, loss, optim, meters etc.")
+        self._logging.info("Setting up components: Model, loss, optim, meters etc.")
         self.epoch = 0
         self.steps = {Phase.TRAIN: 0, Phase.VAL: 0}
 
@@ -1127,7 +1130,7 @@ class Trainer:
             instantiate(self.optim_conf.gradient_logger) if self.optim_conf else None
         )
 
-        logging.info("Finished setting up components: Model, loss, optim, meters etc.")
+        self._logging.info("Finished setting up components: Model, loss, optim, meters etc.")
 
     def _construct_optimizers(self):
         self.optim = construct_optimizer(
