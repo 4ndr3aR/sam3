@@ -604,11 +604,13 @@ def _load_checkpoint(model, checkpoint_path):
                 if "tracker" in k
             }
         )
-    missing_keys, _ = model.load_state_dict(sam3_image_ckpt, strict=False)
-    if len(missing_keys) > 0:
+    missing_keys, unexpected_keys = model.load_state_dict(sam3_image_ckpt, strict=False)
+    if len(missing_keys) > 0 or len(unexpected_keys) > 0:
         print(
-            f"loaded {checkpoint_path} and found "
-            f"missing and/or unexpected keys:\n{missing_keys=}"
+            f"Loaded {checkpoint_path} and found...\n"
+            f"{len(missing_keys)} missing keys and {len(unexpected_keys)} unexpected keys:\n"
+            f"{missing_keys = }\n"
+            f"{unexpected_keys = }\n"
         )
 
 
@@ -868,9 +870,9 @@ def build_sam3_video_model(
             ckpt, strict=strict_state_dict_loading
         )
         if missing_keys:
-            print(f"Missing keys: {missing_keys}")
+            print(f"Missing {len(missing_keys)} model keys: {missing_keys}")
         if unexpected_keys:
-            print(f"Unexpected keys: {unexpected_keys}")
+            print(f"Unexpected {len(unexpected_keys)} model keys: {unexpected_keys}")
 
     model.to(device=device)
     return model

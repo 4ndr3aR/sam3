@@ -11,7 +11,7 @@ paths:
   statuario-v2-tiny_train: /mnt/raid1/dataset/surface-damage-segmentation/__tiny-sam3-video-dataset-v2-phase-2
   statuario-v2-tiny_val: /mnt/raid1/dataset/surface-damage-segmentation/__tiny-sam3-video-dataset-v2-phase-2
   statuario-v2-tiny_anno: /mnt/raid1/dataset/surface-damage-segmentation/__tiny-sam3-video-dataset-v2-phase-2
-  experiment_log_dir: /mnt/raid1/repos/sam3/logs/statuario-v2-tiny-2GPUs-seg-decoder-unfrozen
+  experiment_log_dir: /mnt/raid1/repos/sam3/logs/statuario-v2-tiny-1GPU-seg-decoder-unfrozen
   bpe_path: /mnt/raid1/repos/sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz
 
 # Roboflow dataset configuration
