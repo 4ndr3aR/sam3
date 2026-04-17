@@ -386,7 +386,9 @@ trainer:
     bpe_path: ${paths.bpe_path}
     device: cuda
     eval_mode: false
-    freeze_backbone: true
+    freeze_backbone: false  # Deprecated - use freeze_vision_backbone and freeze_language_backbone separately
+    freeze_vision_backbone: true  # Keep vision features fixed (efficient)
+    freeze_language_backbone: false  # UNFREEZE to allow text encoder to adapt "monument" prompt to this domain
     enable_segmentation: ${scratch.enable_segmentation} # Warning: Enable this if using segmentation.
     compile: true
     #freeze_first_n_decoder_layers: 3
@@ -407,6 +409,10 @@ trainer:
               gt_path: ${paths.statuario-v2-tiny_anno}/annotations-valid.json
               tide: False
               iou_type: "bbox"
+        segmentation:
+          _target_: sam3.eval.segmentation_meter.SegmentationMeter
+          iou_threshold: 0.5
+          name: "seg"
 
   optim:
     amp:
