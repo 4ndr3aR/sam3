@@ -642,6 +642,8 @@ def build_sam3_image_model(
     device="cuda" if torch.cuda.is_available() else "cpu",
     eval_mode=True,
     freeze_backbone=False,
+    freeze_vision_backbone=True,
+    freeze_language_backbone=True,
     checkpoint_path=None,
     load_from_HF=True,
     enable_segmentation=True,
@@ -656,6 +658,9 @@ def build_sam3_image_model(
         bpe_path: Path to the BPE tokenizer vocabulary
         device: Device to load the model on ('cuda' or 'cpu')
         eval_mode: Whether to set the model to evaluation mode
+        freeze_backbone: If True, freeze both vision and language backbones (deprecated, use freeze_vision_backbone and freeze_language_backbone separately)
+        freeze_vision_backbone: Whether to freeze the vision backbone (ViT). Set to False to fine-tune visual features.
+        freeze_language_backbone: Whether to freeze the language backbone (text encoder). Set to False to adapt text embeddings to new domain/vocabulary.
         checkpoint_path: Optional path to model checkpoint
         enable_segmentation: Whether to enable segmentation head
         enable_inst_interactivity: Whether to enable instance interactivity (SAM 1 task)
@@ -721,13 +726,26 @@ def build_sam3_image_model(
         eval_mode,
     )
 
+    # Handle backbone freezing
+    # freeze_backbone is deprecated - use freeze_vision_backbone and freeze_language_backbone separately
     if freeze_backbone:
-        #for name, param in self.model.named_parameters():
-        #    if 'vision_backbone' in name or 'language_backbone' in name or 'geometry_encoder' in name:
-        #        param.requires_grad = False
-        for param in model.backbone.parameters():
+        # Legacy behavior: freeze everything
+        freeze_vision_backbone = True
+        freeze_language_backbone = True
+
+    if freeze_vision_backbone:
+        for param in model.backbone.vision_backbone.parameters():
             param.requires_grad = False
-        model.backbone.eval()
+        model.backbone.vision_backbone.eval()
+        print("[Model Builder] Vision backbone frozen")
+
+    if freeze_language_backbone:
+        for param in model.backbone.text.parameters():
+            param.requires_grad = False
+        model.backbone.text.eval()
+        print("[Model Builder] Language backbone frozen")
+    else:
+        print("[Model Builder] Language backbone UNFROZEN - text encoder will adapt to new prompts/domain")
 
 
     if load_from_HF and checkpoint_path is None:
