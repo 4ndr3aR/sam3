@@ -556,14 +556,28 @@ def _create_sam3_transformer(has_presence_token: bool = True, freeze_first_n_dec
 
 
 def _load_checkpoint(model, checkpoint_path):
-    """Load model checkpoint from file."""
+    """Load model checkpoint from file.
+
+    Handles two checkpoint formats:
+    1. HuggingFace pretrained: keys prefixed with "detector." (e.g., "detector.backbone.vision_backbone.trunk...")
+    2. Training checkpoints: keys without prefix (e.g., "backbone.vision_backbone.trunk...")
+    """
     with g_pathmgr.open(checkpoint_path, "rb") as f:
         ckpt = torch.load(f, map_location="cpu", weights_only=True)
     if "model" in ckpt and isinstance(ckpt["model"], dict):
         ckpt = ckpt["model"]
-    sam3_image_ckpt = {
-        k.replace("detector.", ""): v for k, v in ckpt.items() if "detector" in k
-    }
+
+    # Detect checkpoint format by checking if keys have "detector." prefix
+    has_detector_prefix = any("detector." in k for k in ckpt.keys())
+
+    if has_detector_prefix:
+        # HuggingFace pretrained format: strip "detector." prefix
+        sam3_image_ckpt = {
+            k.replace("detector.", ""): v for k, v in ckpt.items() if "detector" in k
+        }
+    else:
+        # Training checkpoint format: use keys as-is
+        sam3_image_ckpt = dict(ckpt)
 
     '''
     # SUGGESTED BY CLAUDE (fingers crossed...)
