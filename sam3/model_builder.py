@@ -644,6 +644,7 @@ def build_sam3_image_model(
     freeze_backbone=False,
     freeze_vision_backbone=True,
     freeze_language_backbone=True,
+    unfreeze_last_n_text_layers: int = 0,
     checkpoint_path=None,
     load_from_HF=True,
     enable_segmentation=True,
@@ -661,6 +662,7 @@ def build_sam3_image_model(
         freeze_backbone: If True, freeze both vision and language backbones (deprecated, use freeze_vision_backbone and freeze_language_backbone separately)
         freeze_vision_backbone: Whether to freeze the vision backbone (ViT). Set to False to fine-tune visual features.
         freeze_language_backbone: Whether to freeze the language backbone (text encoder). Set to False to adapt text embeddings to new domain/vocabulary.
+        unfreeze_last_n_text_layers: Memory-efficient alternative to freeze_language_backbone=False. Unfreeze only the last N layers of the text encoder (e.g., 4 layers ≈ 58M params vs 347M for full encoder).
         checkpoint_path: Optional path to model checkpoint
         enable_segmentation: Whether to enable segmentation head
         enable_inst_interactivity: Whether to enable instance interactivity (SAM 1 task)
@@ -739,13 +741,33 @@ def build_sam3_image_model(
         model.backbone.vision_backbone.eval()
         print("[Model Builder] Vision backbone frozen")
 
-    if freeze_language_backbone:
+    # Handle language backbone freezing with optional partial unfreezing
+    if unfreeze_last_n_text_layers > 0:
+        # Freeze all text encoder layers first
+        for param in model.backbone.text.parameters():
+            param.requires_grad = False
+        model.backbone.text.eval()
+
+        # Then unfreeze only the last N layers of the transformer
+        text_transformer = model.backbone.text.transformer
+        total_layers = len(text_transformer.resblocks)
+        unfreeze_from = total_layers - unfreeze_last_n_text_layers
+
+        for i in range(unfreeze_from, total_layers):
+            for param in text_transformer.resblocks[i].parameters():
+                param.requires_grad = True
+            text_transformer.resblocks[i].train()
+
+        unfrozen_params = sum(p.numel() for p in text_transformer.resblocks[unfreeze_from:].parameters())
+        print(f"[Model Builder] Text encoder: unfreezing last {unfreeze_last_n_text_layers} of {total_layers} layers "
+              f"({unfrozen_params:,} trainable params) - efficient text adaptation")
+    elif freeze_language_backbone:
         for param in model.backbone.text.parameters():
             param.requires_grad = False
         model.backbone.text.eval()
         print("[Model Builder] Language backbone frozen")
     else:
-        print("[Model Builder] Language backbone UNFROZEN - text encoder will adapt to new prompts/domain")
+        print("[Model Builder] Language backbone UNFROZEN - text encoder will adapt to new prompts/domain (~347M params)")
 
 
     if load_from_HF and checkpoint_path is None:

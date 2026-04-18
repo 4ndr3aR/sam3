@@ -55,7 +55,6 @@ class SegmentationMeter:
         self._total_ground_truth_positive = 0.0
         self._true_positives = 0
         self._false_positives = 0
-        true
         self._false_negatives = 0
 
         # Per-image statistics for detailed reporting

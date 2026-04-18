@@ -386,10 +386,11 @@ trainer:
     bpe_path: ${paths.bpe_path}
     device: cuda
     eval_mode: false
-    freeze_backbone: false  # Deprecated - use freeze_vision_backbone and freeze_language_backbone separately
+    freeze_backbone: false  # Deprecated - use individual options
     freeze_vision_backbone: true  # Keep vision features fixed (efficient)
-    freeze_language_backbone: false  # UNFREEZE to allow text encoder to adapt "monument" prompt to this domain
-    enable_segmentation: ${scratch.enable_segmentation} # Warning: Enable this if using segmentation.
+    freeze_language_backbone: true  # Keep language backbone frozen
+    unfreeze_last_n_text_layers: 4  # UNFREEZE ONLY LAST 4 LAYERS for efficient text adaptation (~58M vs 347M params)
+    enable_segmentation: ${scratch.enable_segmentation}
     compile: true
     #freeze_first_n_decoder_layers: 3
 
