@@ -749,7 +749,8 @@ def build_sam3_image_model(
         model.backbone.language_backbone.eval()
 
         # Then unfreeze only the last N layers of the transformer
-        text_transformer = model.backbone.language_backbone.transformer
+        # VETextEncoder structure: encoder -> TextTransformer -> transformer -> Transformer -> resblocks
+        text_transformer = model.backbone.language_backbone.encoder.transformer
         total_layers = len(text_transformer.resblocks)
         unfreeze_from = total_layers - unfreeze_last_n_text_layers
 
