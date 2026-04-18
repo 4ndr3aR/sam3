@@ -744,12 +744,12 @@ def build_sam3_image_model(
     # Handle language backbone freezing with optional partial unfreezing
     if unfreeze_last_n_text_layers > 0:
         # Freeze all text encoder layers first
-        for param in model.backbone.text.parameters():
+        for param in model.backbone.language_backbone.parameters():
             param.requires_grad = False
-        model.backbone.text.eval()
+        model.backbone.language_backbone.eval()
 
         # Then unfreeze only the last N layers of the transformer
-        text_transformer = model.backbone.text.transformer
+        text_transformer = model.backbone.language_backbone.transformer
         total_layers = len(text_transformer.resblocks)
         unfreeze_from = total_layers - unfreeze_last_n_text_layers
 
@@ -762,9 +762,9 @@ def build_sam3_image_model(
         print(f"[Model Builder] Text encoder: unfreezing last {unfreeze_last_n_text_layers} of {total_layers} layers "
               f"({unfrozen_params:,} trainable params) - efficient text adaptation")
     elif freeze_language_backbone:
-        for param in model.backbone.text.parameters():
+        for param in model.backbone.language_backbone.parameters():
             param.requires_grad = False
-        model.backbone.text.eval()
+        model.backbone.language_backbone.eval()
         print("[Model Builder] Language backbone frozen")
     else:
         print("[Model Builder] Language backbone UNFROZEN - text encoder will adapt to new prompts/domain (~347M params)")
