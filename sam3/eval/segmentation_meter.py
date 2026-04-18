@@ -84,7 +84,7 @@ class SegmentationMeter:
         find_stages: Any,
         find_metadatas: List[Dict],
         model: Any,
-        batch: Dict,
+        batch: Any,
         key: str,
     ):
         """
@@ -94,11 +94,12 @@ class SegmentationMeter:
             find_stages: Model output(s) containing predictions.
             find_metadatas: Metadata for each sample in the batch.
             model: The model (for accessing configuration if needed).
-            batch: Input batch containing ground truth.
+            batch: Input batch containing ground truth (BatchedDatapoint object).
             key: Batch key (e.g., "coco100").
         """
         # Get ground truth masks from batch
-        gt_masks = batch.get("find_masks", None)
+        # batch is a BatchedDatapoint, access find_masks as attribute
+        gt_masks = getattr(batch, "find_masks", None)
         if gt_masks is None:
             logging.warning(f"No ground truth masks found in batch for key={key}")
             return
@@ -390,10 +391,10 @@ class SimpleSegmentationMeter:
         find_stages: Any,
         find_metadatas: List[Dict],
         model: Any,
-        batch: Dict,
+        batch: Any,
         key: str,
     ):
-        gt_masks = batch.get("find_masks", None)
+        gt_masks = getattr(batch, "find_masks", None)
         if gt_masks is None:
             return
 
