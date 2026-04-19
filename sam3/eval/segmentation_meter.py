@@ -111,11 +111,21 @@ class SegmentationMeter:
             logging.warning(f"No segmentation masks in find_targets for key={key}")
             return
 
-        # Filter out None masks (empty segments)
-        gt_masks = [m for m in gt_masks if m is not None]
-        if len(gt_masks) == 0:
-            logging.debug(f"No valid masks in batch for key={key}")
+        # Get num_boxes to know how many masks per image
+        num_boxes = getattr(stage_targets, "num_boxes", None)
+        if num_boxes is None:
+            logging.warning(f"No num_boxes in find_targets for key={key}")
             return
+
+        # Organize masks by image
+        masks_by_image = []
+        offset = 0
+        for nb in num_boxes:
+            image_masks = gt_masks[offset:offset+nb]
+            # Filter out None masks
+            image_masks = [m for m in image_masks if m is not None]
+            masks_by_image.append(image_masks)
+            offset += nb
 
         # Extract predictions from model output
         # find_stages can be a single output or list of outputs (for aux losses)
@@ -138,9 +148,10 @@ class SegmentationMeter:
             presence_scores = preds.get("scores", None)
 
         # Process each image in the batch
-        for batch_idx in range(len(gt_masks)):
+        batch_size = len(masks_by_image)
+        for batch_idx in range(batch_size):
             # Get ground truth masks for this image
-            gt_img_masks = gt_masks[batch_idx]  # List of masks or tensor
+            gt_img_masks = masks_by_image[batch_idx]
 
             # Get predicted masks for this image
             pred_img_masks = pred_masks[batch_idx]  # [N, H, W] or [N, 1, H, W]
@@ -417,10 +428,20 @@ class SimpleSegmentationMeter:
         if gt_masks is None:
             return
 
-        # Filter out None masks
-        gt_masks = [m for m in gt_masks if m is not None]
-        if len(gt_masks) == 0:
+        # Get num_boxes to know how many masks per image
+        num_boxes = getattr(stage_targets, "num_boxes", None)
+        if num_boxes is None:
             return
+
+        # Organize masks by image
+        masks_by_image = []
+        offset = 0
+        for nb in num_boxes:
+            image_masks = gt_masks[offset:offset+nb]
+            # Filter out None masks
+            image_masks = [m for m in image_masks if m is not None]
+            masks_by_image.append(image_masks)
+            offset += nb
 
         if isinstance(find_stages, list):
             preds = find_stages[-1]
@@ -436,8 +457,9 @@ class SimpleSegmentationMeter:
         if presence_scores is None:
             presence_scores = preds.get("scores", None)
 
-        for batch_idx in range(len(gt_masks)):
-            gt_img_masks = gt_masks[batch_idx]
+        batch_size = len(masks_by_image)
+        for batch_idx in range(batch_size):
+            gt_img_masks = masks_by_image[batch_idx]
             pred_img_masks = pred_masks[batch_idx]
 
             if pred_img_masks.dim() == 4 and pred_img_masks.shape[1] == 1:
