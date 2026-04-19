@@ -97,11 +97,24 @@ class SegmentationMeter:
             batch: Input batch containing ground truth (BatchedDatapoint object).
             key: Batch key (e.g., "coco100").
         """
-        # Get ground truth masks from batch
-        # batch is a BatchedDatapoint, access find_masks as attribute
-        gt_masks = getattr(batch, "find_masks", None)
+        # Get ground truth masks from batch.find_targets[stage].segments
+        # batch is a BatchedDatapoint, masks are in find_targets
+        find_targets = getattr(batch, "find_targets", None)
+        if find_targets is None or len(find_targets) == 0:
+            logging.warning(f"No find_targets found in batch for key={key}")
+            return
+
+        # Use stage 0 (first stage queries) for ground truth masks
+        stage_targets = find_targets[0]
+        gt_masks = getattr(stage_targets, "segments", None)
         if gt_masks is None:
-            logging.warning(f"No ground truth masks found in batch for key={key}")
+            logging.warning(f"No segmentation masks in find_targets for key={key}")
+            return
+
+        # Filter out None masks (empty segments)
+        gt_masks = [m for m in gt_masks if m is not None]
+        if len(gt_masks) == 0:
+            logging.debug(f"No valid masks in batch for key={key}")
             return
 
         # Extract predictions from model output
@@ -394,8 +407,19 @@ class SimpleSegmentationMeter:
         batch: Any,
         key: str,
     ):
-        gt_masks = getattr(batch, "find_masks", None)
+        # Get ground truth masks from batch.find_targets[stage].segments
+        find_targets = getattr(batch, "find_targets", None)
+        if find_targets is None or len(find_targets) == 0:
+            return
+
+        stage_targets = find_targets[0]
+        gt_masks = getattr(stage_targets, "segments", None)
         if gt_masks is None:
+            return
+
+        # Filter out None masks
+        gt_masks = [m for m in gt_masks if m is not None]
+        if len(gt_masks) == 0:
             return
 
         if isinstance(find_stages, list):
