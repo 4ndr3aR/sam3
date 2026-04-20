@@ -182,11 +182,33 @@ class COCO_FROM_JSON:
 
         # Collect noun_phrases per category
         cat_id_to_noun_phrases = defaultdict(set)
+        ann_count = 0
         for ann in coco_data.get("annotations", []):
+            ann_count += 1
             cat_id = ann["category_id"]
             noun_phrase = ann.get("noun_phrase", None)
             if noun_phrase:
                 cat_id_to_noun_phrases[cat_id].add(noun_phrase)
+
+        # DEBUG: Print what we found in annotations
+        debug_lines = [
+            f"\n{'*'*60}",
+            f"DEBUG COCO_LOADER: Building noun_phrase mapping",
+            f"  annotation_file: {annotation_file}",
+            f"  mode: {mode}",
+            f"  total_annotations: {ann_count}",
+            f"  categories with noun_phrases: {len(cat_id_to_noun_phrases)}",
+            f"  sorted_cat_ids: {self._sorted_cat_ids}",
+        ]
+
+        # Print first few annotations to verify noun_phrase presence
+        sample_anns = coco_data.get("annotations", [])[:3]
+        for i, ann in enumerate(sample_anns):
+            debug_lines.append(
+                f"  Sample ann {i}: cat_id={ann['category_id']}, noun_phrase='{ann.get('noun_phrase', 'MISSING')}'"
+            )
+
+        debug_lines.append(f"  cat_id_to_noun_phrases: {dict(cat_id_to_noun_phrases)}")
 
         # Build final mapping based on mode
         cat_id_to_noun_phrase = {}
@@ -207,6 +229,12 @@ class COCO_FROM_JSON:
                     cat_id_to_noun_phrase[cat_id] = sorted(phrases)[0]
                 else:
                     cat_id_to_noun_phrase[cat_id] = self._cat_idx_to_text[cat_id]
+
+        debug_lines.append(f"  FINAL cat_id_to_noun_phrase: {cat_id_to_noun_phrase}")
+        debug_lines.append(f"{'*'*60}\n")
+
+        debug_output = "\n".join(debug_lines)
+        print(debug_output)
 
         return cat_id_to_noun_phrase
 
@@ -311,12 +339,20 @@ class COCO_FROM_JSON:
             # 1. Custom prompts (highest priority)
             # 2. noun_phrase from annotations (if enabled)
             # 3. Category name from COCO (default)
+            query_source = ""
             if self.prompts is not None:
                 query["query_text"] = self.prompts[cat_id]
+                query_source = "CUSTOM_PROMPT"
             elif self.use_noun_phrase_as_prompt and self._cat_id_to_noun_phrase is not None:
                 query["query_text"] = self._cat_id_to_noun_phrase.get(cat_id, self._cat_idx_to_text[cat_id])
+                query_source = "NOUN_PHRASE"
             else:
                 query["query_text"] = self._cat_idx_to_text[cat_id]
+                query_source = "CATEGORY_NAME"
+
+            # DEBUG: Print query text assignment (limited to first 3 datapoints)
+            if idx < 3:
+                print(f"DEBUG QUERY[idx={idx}]: cat_id={cat_id}, source={query_source}, query_text='{query['query_text']}', num_objects={len(cur_ann_ids)}")
 
             query["object_ids_output"] = cur_ann_ids
             queries.append(query)
