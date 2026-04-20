@@ -23,6 +23,18 @@ coco_train:
   #hardcoded_img_resolution: 672
   hardcoded_img_resolution: 1008 # (see model_builder.py) img resolution... this also makes CUDA memory explode (because of attention), but downscaling everything is a pain in the ass
 
+  # ====================
+  # PROMPT CONFIGURATION
+  # ====================
+  # CRITICAL: This is likely the root cause of "monument" not working!
+  # Your dataset has categories with names like "Rocky coastal temple", "Coastal temple structure", etc.
+  # BUT all annotations have noun_phrase="monument"
+  # By default, training uses category.name as the prompt, NOT noun_phrase
+  # Set use_noun_phrase_as_prompt: true to train with "monument" instead
+  coco_json_loader_kwargs:
+    use_noun_phrase_as_prompt: false # false = use category.name, true = use noun_phrase from annotations
+    noun_phrase_mode: "all_monument"  # Options: "unique" (first unique per cat), "all_monument" (force all to "monument"), "per_annotation"
+
   # Training transforms pipeline
   train_transforms:
     - _target_: sam3.train.transforms.basic_for_api.ComposeAPI
@@ -348,6 +360,7 @@ trainer:
         use_caching: False
         img_folder: ${paths.statuario-v2-tiny_train}/
         ann_file: ${paths.statuario-v2-tiny_anno}/annotations-train.json
+        coco_json_loader_kwargs: ${coco_train.coco_json_loader_kwargs}  # Pass noun_phrase settings
 
       shuffle: True
       batch_size: ${scratch.train_batch_size}
@@ -372,6 +385,7 @@ trainer:
         max_ann_per_img: ${coco_train.max_queries}
         multiplier: 1
         training: false
+        coco_json_loader_kwargs: ${coco_train.coco_json_loader_kwargs}  # Pass noun_phrase settings for consistency
 
       shuffle: False
       batch_size: ${scratch.val_batch_size}

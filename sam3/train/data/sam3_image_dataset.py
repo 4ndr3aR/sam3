@@ -159,6 +159,7 @@ class CustomCocoDetectionAPI(VisionDataset):
         filter_query=None,
         coco_json_loader: Callable = COCO_FROM_JSON,
         limit_ids: int = None,
+        coco_json_loader_kwargs: Optional[Dict] = None,  # NEW: Extra kwargs to pass to coco_json_loader
     ) -> None:
         super().__init__(root)
 
@@ -173,6 +174,7 @@ class CustomCocoDetectionAPI(VisionDataset):
 
         self.coco = None
         self.coco_json_loader = coco_json_loader
+        self.coco_json_loader_kwargs = coco_json_loader_kwargs or {}  # NEW
         self.limit_ids = limit_ids
         self.set_sharded_annotation_file(0)
         self.training = training
@@ -240,7 +242,8 @@ class CustomCocoDetectionAPI(VisionDataset):
         if self.coco is not None:
             del self.coco
 
-        self.coco = self.coco_json_loader(annFile)
+        # Pass additional kwargs to the coco_json_loader if provided
+        self.coco = self.coco_json_loader(annFile, **self.coco_json_loader_kwargs)
         # Use a torch tensor here to optimize memory usage when using several dataloaders
         ids_list = list(sorted(self.coco.getDatapointIds()))
         if self.limit_ids is not None:
@@ -454,6 +457,7 @@ class Sam3ImageDataset(CustomCocoDetectionAPI):
         filter_query=None,
         coco_json_loader: Callable = COCO_FROM_JSON,
         limit_ids: int = None,
+        coco_json_loader_kwargs: Optional[Dict] = None,  # NEW: Extra kwargs for COCO loader
     ):
         super(Sam3ImageDataset, self).__init__(
             img_folder,
@@ -467,6 +471,7 @@ class Sam3ImageDataset(CustomCocoDetectionAPI):
             filter_query=filter_query,
             coco_json_loader=coco_json_loader,
             limit_ids=limit_ids,
+            coco_json_loader_kwargs=coco_json_loader_kwargs,  # NEW
         )
 
         self._transforms = transforms

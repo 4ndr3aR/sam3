@@ -113,6 +113,8 @@ class COCO_FROM_JSON:
         prompts=None,
         include_negatives=True,
         category_chunk_size=None,
+        use_noun_phrase_as_prompt=False,  # NEW: Use noun_phrase from annotations instead of category.name
+        noun_phrase_mode="unique",  # "unique" (first unique noun_phrase), "all_monument" (force all to "monument"), "per_annotation" (different query per annotation)
     ):
         """
         Initialize the COCO training API.
@@ -121,6 +123,11 @@ class COCO_FROM_JSON:
             annotation_file (str): Path to COCO JSON annotation file
             prompts: Optional custom prompts for categories
             include_negatives (bool): Whether to include negative examples (categories with no instances)
+            use_noun_phrase_as_prompt (bool): If True, use noun_phrase field from annotations as query_text
+            noun_phrase_mode (str): How to handle noun_phrases:
+                - "unique": Use first unique noun_phrase per category
+                - "all_monument": Force all queries to use "monument"
+                - "per_annotation": Create separate query per annotation with its noun_phrase
         """
         self._raw_data, self._cat_idx_to_text = load_coco_and_group_by_image(
             annotation_file
@@ -137,6 +144,16 @@ class COCO_FROM_JSON:
             self._sorted_cat_ids[i : i + self.category_chunk_size]
             for i in range(0, len(self._sorted_cat_ids), self.category_chunk_size)
         ]
+
+        # Store noun_phrase settings
+        self.use_noun_phrase_as_prompt = use_noun_phrase_as_prompt
+        self.noun_phrase_mode = noun_phrase_mode
+
+        # Build noun_phrase mapping if needed
+        self._cat_id_to_noun_phrase = None
+        if use_noun_phrase_as_prompt:
+            self._cat_id_to_noun_phrase = self._build_noun_phrase_mapping(annotation_file, noun_phrase_mode)
+
         if prompts is not None:
             prompts = eval(prompts)
             self.prompts = {}
@@ -145,6 +162,53 @@ class COCO_FROM_JSON:
             assert len(self.prompts) == len(self._sorted_cat_ids), (
                 "Number of prompts must match number of categories"
             )
+
+    def _build_noun_phrase_mapping(self, annotation_file: str, mode: str) -> Dict[int, str]:
+        """
+        Build a mapping from category_id to noun_phrase.
+
+        Args:
+            annotation_file: Path to COCO JSON file
+            mode: "unique", "all_monument", or "per_annotation"
+
+        Returns:
+            Dict mapping category_id to noun_phrase string
+        """
+        import json
+        from collections import defaultdict
+
+        with open(annotation_file, "r") as f:
+            coco_data = json.load(f)
+
+        # Collect noun_phrases per category
+        cat_id_to_noun_phrases = defaultdict(set)
+        for ann in coco_data.get("annotations", []):
+            cat_id = ann["category_id"]
+            noun_phrase = ann.get("noun_phrase", None)
+            if noun_phrase:
+                cat_id_to_noun_phrases[cat_id].add(noun_phrase)
+
+        # Build final mapping based on mode
+        cat_id_to_noun_phrase = {}
+        for cat_id in self._sorted_cat_ids:
+            if mode == "all_monument":
+                cat_id_to_noun_phrase[cat_id] = "monument"
+            elif mode == "unique":
+                phrases = cat_id_to_noun_phrases.get(cat_id, set())
+                if phrases:
+                    # Use first unique noun_phrase (sorted for determinism)
+                    cat_id_to_noun_phrase[cat_id] = sorted(phrases)[0]
+                else:
+                    # Fallback to category name if no noun_phrase found
+                    cat_id_to_noun_phrase[cat_id] = self._cat_idx_to_text[cat_id]
+            else:  # per_annotation - we handle this differently in loadQueriesAndAnnotationsFromDatapoint
+                phrases = cat_id_to_noun_phrases.get(cat_id, set())
+                if phrases:
+                    cat_id_to_noun_phrase[cat_id] = sorted(phrases)[0]
+                else:
+                    cat_id_to_noun_phrase[cat_id] = self._cat_idx_to_text[cat_id]
+
+        return cat_id_to_noun_phrase
 
     def getDatapointIds(self):
         """Return all datapoint indices for training."""
@@ -242,11 +306,18 @@ class COCO_FROM_JSON:
             query = query_template.copy()
             query["id"] = len(queries)
             query["original_cat_id"] = cat_id
-            query["query_text"] = (
-                self._cat_idx_to_text[cat_id]
-                if self.prompts is None
-                else self.prompts[cat_id]
-            )
+
+            # Determine query_text based on configuration priority:
+            # 1. Custom prompts (highest priority)
+            # 2. noun_phrase from annotations (if enabled)
+            # 3. Category name from COCO (default)
+            if self.prompts is not None:
+                query["query_text"] = self.prompts[cat_id]
+            elif self.use_noun_phrase_as_prompt and self._cat_id_to_noun_phrase is not None:
+                query["query_text"] = self._cat_id_to_noun_phrase.get(cat_id, self._cat_idx_to_text[cat_id])
+            else:
+                query["query_text"] = self._cat_idx_to_text[cat_id]
+
             query["object_ids_output"] = cur_ann_ids
             queries.append(query)
 
