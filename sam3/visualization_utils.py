@@ -855,16 +855,18 @@ def visualize_prompt_overlay(
     plt.show()
 
 
-def plot_results(img, results):
-    plt.figure(figsize=(12, 8))
+def plot_results(img, results, filter_score=0.5):
+    plt.figure(figsize=(19.2, 10.8))
     plt.imshow(img)
     nb_objects = len(results["scores"])
     print(f"found {nb_objects} object(s)")
     for i in range(nb_objects):
+        prob = results["scores"][i].item()
+        if prob < filter_score:
+            continue
         color = COLORS[i % len(COLORS)]
         plot_mask(results["masks"][i].squeeze(0).cpu(), color=color)
         w, h = img.size
-        prob = results["scores"][i].item()
         plot_bbox(
             h,
             w,

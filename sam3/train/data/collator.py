@@ -291,7 +291,7 @@ def collate_fn_api(
     offset_query_id = [0 for _ in range(num_stages)]
     for batch_idx, data in enumerate(batch):
         # DEBUG: Print sample information (limited to first few samples per batch)
-        debug_print_batch_sample(data, batch_idx, verbose=True, max_samples=3)
+        # debug_print_batch_sample(data, batch_idx, verbose=True, max_samples=3)
 
         img_batch.extend([img.data for img in data.images])
 
