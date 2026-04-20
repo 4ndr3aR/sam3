@@ -215,3 +215,75 @@ coco_json_loader_kwargs:
 > **The model learns the VISUAL concept during training, but associates it with the TEXTUAL prompt used.** If you train with "Rocky coastal temple" as the prompt, the model learns to segment that visual pattern when it sees the text embedding for "Rocky coastal temple". It does NOT automatically generalize to "monument" because that's a completely different text embedding it was never trained on.
 
 **Solution:** Train with "monument" as the prompt so the model learns the association between the "monument" text embedding and the visual pattern of the fortress.
+
+---
+
+# Session 4: noun_phrase Fix Didn't Work - More Debug Needed
+
+## Date: 2026-04-20
+
+### User Report
+
+The noun_phrase fix **did not work**:
+
+1. Trained **18 epochs** with `use_noun_phrase_as_prompt: true` (`noun_phrase_mode: "all_monument"`)
+2. Trained a few more epochs with same set to **false** after **renaming all categories** in annotations to "monument"
+3. **Neither approach worked**
+
+### Results
+
+| Prompt | Result |
+|-- ---- |-- --- -- ----|
+| "monument" | ❌ **Zero masks** produced by ANY checkpoint |
+| "Rocky coastal temple" | ✅ Works until checkpoint 5, then ❌ zero masks |
+| "rock" | ✅ Works but with **decreasing masks** over training |
+
+### Analysis
+
+This is concerning:
+1. Training with "monument" as prompt produced **zero masks** at inference - suggests the model isn't learning anything
+2. Performance **degrades over time** with "rocky coastal temple" and "rock" prompts
+3. Even renaming categories didn't help
+
+### Next Steps: Comprehensive Debug Output
+
+Added debug output to trace the entire data pipeline:
+
+**1. `train/data/coco_json_loaders.py`**
+- Debug print in `_build_noun_phrase_mapping()` showing what noun_phrases are found in annotations
+- Debug print when assigning `query_text` showing source (CUSTOM/NOUN_PHRASE/CATEGORY)
+
+**2. `train/data/collator.py`**
+- New function `debug_print_batch_sample()` prints:
+  - Query text
+  - Number of objects per query
+  - Bounding boxes
+  - Mask areas (not full masks)
+- Batch summary showing unique query texts and total objects
+- Limited to first 3 samples per batch
+
+### What to Look For in Debug Output
+
+1. **Are noun_phrases actually being read?** Check if annotations contain `noun_phrase` field
+2. **Is query_text set to "monument"?** Verify the correct prompt is being used
+3. **Are segmentation masks being loaded?** Check if masks have non-zero area
+4. **Are bounding boxes valid?** Check if boxes have positive area
+
+### Possible Issues
+
+1. **noun_phrase field missing:** Annotations might not actually have `noun_phrase` field
+2. **Masks not loading:** Segmentation might be disabled or broken
+3. **Learning rate too high/low:** Model might be diverging or not learning
+4. **Loss not being computed:** Mask loss might not be active
+5. **Gradient vanishing:** Language backbone might not be receiving gradients
+
+### Verification Commands
+
+After running training, check logs for:
+```
+DEBUG COCO_LOADER: Building noun_phrase mapping
+DEBUG QUERY[idx=0]: cat_id=X, source=..., query_text='...'
+DEBUG COLLECT FN: batch_size=X, unique_queries=X, unique_query_texts: [...]
+DEBUG BATCH SAMPLE [0]: X queries, X images
+  Query 0: query_text='...'
+```
