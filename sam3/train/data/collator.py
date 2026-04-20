@@ -2,6 +2,7 @@
 
 # pyre-unsafe
 
+import logging
 from dataclasses import dataclass, field as field_ptr_behaviour, fields, is_dataclass
 from typing import Any, get_args, get_origin, List, Union
 
@@ -17,6 +18,88 @@ from .sam3_image_dataset import Datapoint
 
 
 MyTensor = Union[torch.Tensor, List[Any]]
+
+# Configure debug logger
+DEBUG_COLLECTOR_LOG = logging.getLogger("collator_debug")
+
+
+def debug_print_batch_sample(
+    data: Datapoint,
+    batch_idx: int,
+    verbose: bool = True,
+    max_samples: int = 5,
+):
+    """
+    Print debug information about a single sample in the batch.
+
+    Args:
+        data: The datapoint to debug
+        batch_idx: Index of this sample in the batch
+        verbose: If True, print more details
+        max_samples: Maximum number of samples to print per batch (to avoid flooding logs)
+    """
+    # Limit output to first few samples per batch
+    if batch_idx >= max_samples:
+        return
+
+    lines = []
+    lines.append(f"\n{'='*80}")
+    lines.append(f"DEBUG BATCH SAMPLE [{batch_idx}]: {len(data.find_queries)} queries, {len(data.images)} images")
+    lines.append(f"{'='*80}")
+
+    for img_idx, img in enumerate(data.images):
+        lines.append(f"\n  Image {img_idx}: size={img.size}, data_shape={img.data.shape if hasattr(img.data, 'shape') else len(img.data)}")
+        lines.append(f"    Objects: {len(img.objects)}")
+
+        for obj_idx, obj in enumerate(img.objects):
+            # Get bbox info
+            bbox_str = ""
+            if hasattr(obj, 'bbox') and obj.bbox is not None:
+                if hasattr(obj.bbox, 'tolist'):
+                    bbox_str = f"bbox={obj.bbox.tolist()}"
+                else:
+                    bbox_str = f"bbox={obj.bbox}"
+
+            # Get segmentation info (just size/area, not the mask itself)
+            seg_info = ""
+            if hasattr(obj, 'segment') and obj.segment is not None:
+                if hasattr(obj.segment, 'shape'):
+                    seg_shape = obj.segment.shape
+                    seg_area = int(obj.segment.sum()) if hasattr(obj.segment, 'sum') else "N/A"
+                    seg_info = f"seg_shape={seg_shape}, seg_area_pixels={seg_area}"
+                elif hasattr(obj.segment, 'counts'):
+                    # RLE format
+                    seg_info = f"seg=RLE"
+                else:
+                    seg_info = f"seg_size={len(str(obj.segment))} chars"
+            elif hasattr(obj, 'segment'):
+                seg_info = "seg=None"
+
+            lines.append(f"      Object {obj_idx}: {bbox_str}, {seg_info}")
+
+    lines.append(f"\n  Queries:")
+    for q_idx, q in enumerate(data.find_queries):
+        query_info = []
+        query_info.append(f"  Query {q_idx}:")
+        query_info.append(f"    query_text='{q.query_text}'")
+        query_info.append(f"    image_id={q.image_id}, stage={q.query_processing_order}")
+        query_info.append(f"    object_ids_output={q.object_ids_output[:5]}{'...' if len(q.object_ids_output) > 5 else ''} (total={len(q.object_ids_output)})")
+        query_info.append(f"    is_exhaustive={q.is_exhaustive}")
+
+        if q.input_bbox is not None:
+            query_info.append(f"    input_bbox={q.input_bbox.tolist() if hasattr(q.input_bbox, 'tolist') else q.input_bbox}")
+
+        if q.inference_metadata is not None:
+            query_info.append(f"    inference_metadata.coco_image_id={q.inference_metadata.coco_image_id}")
+
+        lines.extend(query_info)
+
+    output = "\n".join(lines)
+
+    # Print to both console and logger
+    if verbose:
+        print(output)
+    DEBUG_COLLECTOR_LOG.debug(output)
 
 
 def convert_my_tensors(obj):
@@ -142,6 +225,18 @@ def collate_fn_api(
     repeats: int = 0,
     load_image_in_fp16: bool = False,
 ):
+    # DEBUG: Print batch summary
+    unique_query_texts = set()
+    total_objects = 0
+    for data in batch:
+        for q in data.find_queries:
+            unique_query_texts.add(q.query_text)
+            total_objects += len(q.object_ids_output)
+
+    debug_batch_summary = f"\n{'#'*80}\nDEBUG COLLECT FN: batch_size={len(batch)}, unique_queries={len(unique_query_texts)}, total_objects={total_objects}\nUnique query texts: {sorted(unique_query_texts)}\n{'#'*80}"
+    print(debug_batch_summary)
+    DEBUG_COLLECTOR_LOG.debug(debug_batch_summary)
+
     # img_batch = torch.stack(sum([[img.data for img in v.images] for v in batch], []))
     img_batch = []
     text_batch = []
@@ -194,7 +289,10 @@ def collate_fn_api(
 
     offset_img_id = 0
     offset_query_id = [0 for _ in range(num_stages)]
-    for data in batch:
+    for batch_idx, data in enumerate(batch):
+        # DEBUG: Print sample information (limited to first few samples per batch)
+        debug_print_batch_sample(data, batch_idx, verbose=True, max_samples=3)
+
         img_batch.extend([img.data for img in data.images])
 
         if data.raw_images is not None:
