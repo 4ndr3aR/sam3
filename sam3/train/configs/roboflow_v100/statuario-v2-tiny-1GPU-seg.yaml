@@ -292,7 +292,7 @@ scratch:
   scheduler_warmup: 20
   scheduler_cooldown: 20
 
-  global_batch_size: 32
+  global_batch_size: 64
   gradient_accumulation_steps: 8
 
   train_batch_size: ${scratch.global_batch_size}
