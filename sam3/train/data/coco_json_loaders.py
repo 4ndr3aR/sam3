@@ -16,84 +16,84 @@ from pycocotools import mask as mask_util
 
 
 def convert_boxlist_to_normalized_tensor(box_list, image_width, image_height):
-    """
-    Converts a list of bounding boxes to a normalized PyTorch tensor.
+	"""
+	Converts a list of bounding boxes to a normalized PyTorch tensor.
 
-    Args:
-        box_list (list of list or tuples): Each box is [x_min, y_min, x_max, y_max].
-        image_width (int or float): Width of the image.
-        image_height (int or float): Height of the image.
+	Args:
+		box_list (list of list or tuples): Each box is [x_min, y_min, x_max, y_max].
+		image_width (int or float): Width of the image.
+		image_height (int or float): Height of the image.
 
-    Returns:
-        torch.Tensor: Normalized tensor of shape (N, 4), values in [0, 1].
-    """
-    boxes = torch.tensor(box_list, dtype=torch.float32)
-    boxes[:, [0, 2]] /= image_width  # x_min, x_max
-    boxes[:, [1, 3]] /= image_height  # y_min, y_max
-    boxes = boxes.clamp(0, 1)
-    return boxes
+	Returns:
+		torch.Tensor: Normalized tensor of shape (N, 4), values in [0, 1].
+	"""
+	boxes = torch.tensor(box_list, dtype=torch.float32)
+	boxes[:, [0, 2]] /= image_width  # x_min, x_max
+	boxes[:, [1, 3]] /= image_height  # y_min, y_max
+	boxes = boxes.clamp(0, 1)
+	return boxes
 
 
 def load_coco_and_group_by_image(json_path: str) -> Tuple[List[Dict], Dict[int, str]]:
-    """
-    Load COCO JSON file and group annotations by image.
+	"""
+	Load COCO JSON file and group annotations by image.
 
-    Args:
-        json_path (str): Path to COCO JSON file.
+	Args:
+		json_path (str): Path to COCO JSON file.
 
-    Returns:
-        Tuple containing:
-            - List of dicts with 'image' and 'annotations' keys
-            - Dict mapping category IDs to category names
-    """
-    with open(json_path, "r") as f:
-        coco = json.load(f)
+	Returns:
+		Tuple containing:
+			- List of dicts with 'image' and 'annotations' keys
+			- Dict mapping category IDs to category names
+	"""
+	with open(json_path, "r") as f:
+		coco = json.load(f)
 
-    images = {img["id"]: img for img in coco["images"]}
+	images = {img["id"]: img for img in coco["images"]}
 
-    anns_by_image = defaultdict(list)
-    for ann in coco["annotations"]:
-        anns_by_image[ann["image_id"]].append(ann)
+	anns_by_image = defaultdict(list)
+	for ann in coco["annotations"]:
+		anns_by_image[ann["image_id"]].append(ann)
 
-    sorted_image_ids = sorted(images.keys())
+	sorted_image_ids = sorted(images.keys())
 
-    grouped = []
-    for image_id in sorted_image_ids:
-        image_info = images[image_id]
-        grouped.append(
-            {"image": image_info, "annotations": anns_by_image.get(image_id, [])}
-        )
+	grouped = []
+	for image_id in sorted_image_ids:
+		image_info = images[image_id]
+		grouped.append(
+			{"image": image_info, "annotations": anns_by_image.get(image_id, [])}
+		)
 
-    cat_id_to_name = {cat["id"]: cat["name"] for cat in coco["categories"]}
+	cat_id_to_name = {cat["id"]: cat["name"] for cat in coco["categories"]}
 
-    return grouped, cat_id_to_name
+	return grouped, cat_id_to_name
 
 
 def ann_to_rle(segm, im_info: Dict) -> Dict:
-    """
-    Convert annotation which can be polygons or uncompressed RLE to RLE.
+	"""
+	Convert annotation which can be polygons or uncompressed RLE to RLE.
 
-    Args:
-        segm: Segmentation data (polygon list or RLE dict)
-        im_info (dict): Image info containing 'height' and 'width'
+	Args:
+		segm: Segmentation data (polygon list or RLE dict)
+		im_info (dict): Image info containing 'height' and 'width'
 
-    Returns:
-        RLE encoded segmentation
-    """
-    h, w = im_info["height"], im_info["width"]
+	Returns:
+		RLE encoded segmentation
+	"""
+	h, w = im_info["height"], im_info["width"]
 
-    if isinstance(segm, list):
-        # Polygon - merge all parts into one mask RLE code
-        rles = mask_util.frPyObjects(segm, h, w)
-        rle = mask_util.merge(rles)
-    elif isinstance(segm["counts"], list):
-        # Uncompressed RLE
-        rle = mask_util.frPyObjects(segm, h, w)
-    else:
-        # Already RLE
-        rle = segm
+	if isinstance(segm, list):
+		# Polygon - merge all parts into one mask RLE code
+		rles = mask_util.frPyObjects(segm, h, w)
+		rle = mask_util.merge(rles)
+	elif isinstance(segm["counts"], list):
+		# Uncompressed RLE
+		rle = mask_util.frPyObjects(segm, h, w)
+	else:
+		# Already RLE
+		rle = segm
 
-    return rle
+	return rle
 
 
 # ============================================================================
@@ -102,284 +102,287 @@ def ann_to_rle(segm, im_info: Dict) -> Dict:
 
 
 class COCO_FROM_JSON:
-    """
-    COCO training API for loading box-only annotations from JSON.
-    Groups all annotations per image and creates queries per category.
-    """
+	"""
+	COCO training API for loading box-only annotations from JSON.
+	Groups all annotations per image and creates queries per category.
+	"""
 
-    def __init__(
-        self,
-        annotation_file,
-        prompts=None,
-        include_negatives=True,
-        category_chunk_size=None,
-        use_noun_phrase_as_prompt=False,  # NEW: Use noun_phrase from annotations instead of category.name
-        noun_phrase_mode="unique",  # "unique" (first unique noun_phrase), "all_monument" (force all to "monument"), "per_annotation" (different query per annotation)
-    ):
-        """
-        Initialize the COCO training API.
+	def __init__(
+		self,
+		annotation_file,
+		prompts=None,
+		include_negatives=True,
+		category_chunk_size=None,
+		use_noun_phrase_as_prompt=False,  # NEW: Use noun_phrase from annotations instead of category.name
+		noun_phrase_mode="unique",  # "unique" (first unique noun_phrase), "all_monument" (force all to "monument"), "per_annotation" (different query per annotation)
+		debug_queries=False,
+	):
+		"""
+		Initialize the COCO training API.
 
-        Args:
-            annotation_file (str): Path to COCO JSON annotation file
-            prompts: Optional custom prompts for categories
-            include_negatives (bool): Whether to include negative examples (categories with no instances)
-            use_noun_phrase_as_prompt (bool): If True, use noun_phrase field from annotations as query_text
-            noun_phrase_mode (str): How to handle noun_phrases:
-                - "unique": Use first unique noun_phrase per category
-                - "all_monument": Force all queries to use "monument"
-                - "per_annotation": Create separate query per annotation with its noun_phrase
-        """
-        self._raw_data, self._cat_idx_to_text = load_coco_and_group_by_image(
-            annotation_file
-        )
-        self._sorted_cat_ids = sorted(list(self._cat_idx_to_text.keys()))
-        self.prompts = None
-        self.include_negatives = include_negatives
-        self.category_chunk_size = (
-            category_chunk_size
-            if category_chunk_size is not None
-            else len(self._sorted_cat_ids)
-        )
-        self.category_chunks = [
-            self._sorted_cat_ids[i : i + self.category_chunk_size]
-            for i in range(0, len(self._sorted_cat_ids), self.category_chunk_size)
-        ]
+		Args:
+			annotation_file (str): Path to COCO JSON annotation file
+			prompts: Optional custom prompts for categories
+			include_negatives (bool): Whether to include negative examples (categories with no instances)
+			use_noun_phrase_as_prompt (bool): If True, use noun_phrase field from annotations as query_text
+			noun_phrase_mode (str): How to handle noun_phrases:
+				- "unique": Use first unique noun_phrase per category
+				- "all_monument": Force all queries to use "monument"
+				- "per_annotation": Create separate query per annotation with its noun_phrase
+		"""
+		self._raw_data, self._cat_idx_to_text = load_coco_and_group_by_image(
+			annotation_file
+		)
+		self._sorted_cat_ids = sorted(list(self._cat_idx_to_text.keys()))
+		self.prompts = None
+		self.include_negatives = include_negatives
+		self.category_chunk_size = (
+			category_chunk_size
+			if category_chunk_size is not None
+			else len(self._sorted_cat_ids)
+		)
+		self.category_chunks = [
+			self._sorted_cat_ids[i : i + self.category_chunk_size]
+			for i in range(0, len(self._sorted_cat_ids), self.category_chunk_size)
+		]
 
-        # Store noun_phrase settings
-        self.use_noun_phrase_as_prompt = use_noun_phrase_as_prompt
-        self.noun_phrase_mode = noun_phrase_mode
+		# Store noun_phrase settings
+		self.use_noun_phrase_as_prompt = use_noun_phrase_as_prompt
+		self.noun_phrase_mode = noun_phrase_mode
+		self.debug_queries = debug_queries
 
-        # Build noun_phrase mapping if needed
-        self._cat_id_to_noun_phrase = None
-        if use_noun_phrase_as_prompt:
-            self._cat_id_to_noun_phrase = self._build_noun_phrase_mapping(annotation_file, noun_phrase_mode)
+		# Build noun_phrase mapping if needed
+		self._cat_id_to_noun_phrase = None
+		if use_noun_phrase_as_prompt:
+			self._cat_id_to_noun_phrase = self._build_noun_phrase_mapping(annotation_file, noun_phrase_mode)
 
-        if prompts is not None:
-            prompts = eval(prompts)
-            self.prompts = {}
-            for loc_dict in prompts:
-                self.prompts[int(loc_dict["id"])] = loc_dict["name"]
-            assert len(self.prompts) == len(self._sorted_cat_ids), (
-                "Number of prompts must match number of categories"
-            )
+		if prompts is not None:
+			prompts = eval(prompts)
+			self.prompts = {}
+			for loc_dict in prompts:
+				self.prompts[int(loc_dict["id"])] = loc_dict["name"]
+			assert len(self.prompts) == len(self._sorted_cat_ids), (
+				"Number of prompts must match number of categories"
+			)
 
-    def _build_noun_phrase_mapping(self, annotation_file: str, mode: str) -> Dict[int, str]:
-        """
-        Build a mapping from category_id to noun_phrase.
+	def _build_noun_phrase_mapping(self, annotation_file: str, mode: str) -> Dict[int, str]:
+		"""
+		Build a mapping from category_id to noun_phrase.
 
-        Args:
-            annotation_file: Path to COCO JSON file
-            mode: "unique", "all_monument", or "per_annotation"
+		Args:
+			annotation_file: Path to COCO JSON file
+			mode: "unique", "all_monument", or "per_annotation"
 
-        Returns:
-            Dict mapping category_id to noun_phrase string
-        """
-        import json
-        from collections import defaultdict
+		Returns:
+			Dict mapping category_id to noun_phrase string
+		"""
+		import json
+		from collections import defaultdict
 
-        with open(annotation_file, "r") as f:
-            coco_data = json.load(f)
+		with open(annotation_file, "r") as f:
+			coco_data = json.load(f)
 
-        # Collect noun_phrases per category
-        cat_id_to_noun_phrases = defaultdict(set)
-        ann_count = 0
-        for ann in coco_data.get("annotations", []):
-            ann_count += 1
-            cat_id = ann["category_id"]
-            noun_phrase = ann.get("noun_phrase", None)
-            if noun_phrase:
-                cat_id_to_noun_phrases[cat_id].add(noun_phrase)
+		# Collect noun_phrases per category
+		cat_id_to_noun_phrases = defaultdict(set)
+		ann_count = 0
+		for ann in coco_data.get("annotations", []):
+			ann_count += 1
+			cat_id = ann["category_id"]
+			noun_phrase = ann.get("noun_phrase", None)
+			if noun_phrase:
+				cat_id_to_noun_phrases[cat_id].add(noun_phrase)
 
-        # DEBUG: Print what we found in annotations
-        debug_lines = [
-            f"\n{'*'*60}",
-            f"DEBUG COCO_LOADER: Building noun_phrase mapping",
-            f"  annotation_file: {annotation_file}",
-            f"  mode: {mode}",
-            f"  total_annotations: {ann_count}",
-            f"  categories with noun_phrases: {len(cat_id_to_noun_phrases)}",
-            f"  sorted_cat_ids: {self._sorted_cat_ids}",
-        ]
+		# DEBUG: Print what we found in annotations
+		debug_lines = [
+			f"\n{'*'*60}",
+			f"DEBUG COCO_LOADER: Building noun_phrase mapping",
+			f"  annotation_file: {annotation_file}",
+			f"  mode: {mode}",
+			f"  total_annotations: {ann_count}",
+			f"  categories with noun_phrases: {len(cat_id_to_noun_phrases)}",
+			f"  sorted_cat_ids: {self._sorted_cat_ids}",
+		]
 
-        # Print first few annotations to verify noun_phrase presence
-        sample_anns = coco_data.get("annotations", [])[:3]
-        for i, ann in enumerate(sample_anns):
-            debug_lines.append(
-                f"  Sample ann {i}: cat_id={ann['category_id']}, noun_phrase='{ann.get('noun_phrase', 'MISSING')}'"
-            )
+		# Print first few annotations to verify noun_phrase presence
+		sample_anns = coco_data.get("annotations", [])[:3]
+		for i, ann in enumerate(sample_anns):
+			debug_lines.append(
+				f"  Sample ann {i}: cat_id={ann['category_id']}, noun_phrase='{ann.get('noun_phrase', 'MISSING')}'"
+			)
 
-        debug_lines.append(f"  cat_id_to_noun_phrases: {dict(cat_id_to_noun_phrases)}")
+		debug_lines.append(f"  cat_id_to_noun_phrases: {dict(cat_id_to_noun_phrases)}")
 
-        # Build final mapping based on mode
-        cat_id_to_noun_phrase = {}
-        for cat_id in self._sorted_cat_ids:
-            if mode == "all_monument":
-                cat_id_to_noun_phrase[cat_id] = "monument"
-            elif mode == "unique":
-                phrases = cat_id_to_noun_phrases.get(cat_id, set())
-                if phrases:
-                    # Use first unique noun_phrase (sorted for determinism)
-                    cat_id_to_noun_phrase[cat_id] = sorted(phrases)[0]
-                else:
-                    # Fallback to category name if no noun_phrase found
-                    cat_id_to_noun_phrase[cat_id] = self._cat_idx_to_text[cat_id]
-            else:  # per_annotation - we handle this differently in loadQueriesAndAnnotationsFromDatapoint
-                phrases = cat_id_to_noun_phrases.get(cat_id, set())
-                if phrases:
-                    cat_id_to_noun_phrase[cat_id] = sorted(phrases)[0]
-                else:
-                    cat_id_to_noun_phrase[cat_id] = self._cat_idx_to_text[cat_id]
+		# Build final mapping based on mode
+		cat_id_to_noun_phrase = {}
+		for cat_id in self._sorted_cat_ids:
+			if mode == "all_monument":
+				cat_id_to_noun_phrase[cat_id] = "monument"
+			elif mode == "unique":
+				phrases = cat_id_to_noun_phrases.get(cat_id, set())
+				if phrases:
+					# Use first unique noun_phrase (sorted for determinism)
+					cat_id_to_noun_phrase[cat_id] = sorted(phrases)[0]
+				else:
+					# Fallback to category name if no noun_phrase found
+					cat_id_to_noun_phrase[cat_id] = self._cat_idx_to_text[cat_id]
+			else:  # per_annotation - we handle this differently in loadQueriesAndAnnotationsFromDatapoint
+				phrases = cat_id_to_noun_phrases.get(cat_id, set())
+				if phrases:
+					cat_id_to_noun_phrase[cat_id] = sorted(phrases)[0]
+				else:
+					cat_id_to_noun_phrase[cat_id] = self._cat_idx_to_text[cat_id]
 
-        debug_lines.append(f"  FINAL cat_id_to_noun_phrase: {cat_id_to_noun_phrase}")
-        debug_lines.append(f"{'*'*60}\n")
+		debug_lines.append(f"  FINAL cat_id_to_noun_phrase: {cat_id_to_noun_phrase}")
+		debug_lines.append(f"{'*'*60}\n")
 
-        debug_output = "\n".join(debug_lines)
-        print(debug_output)
+		debug_output = "\n".join(debug_lines)
+		if self.debug_queries:
+			print(debug_output)
 
-        return cat_id_to_noun_phrase
+		return cat_id_to_noun_phrase
 
-    def getDatapointIds(self):
-        """Return all datapoint indices for training."""
-        return list(range(len(self._raw_data) * len(self.category_chunks)))
+	def getDatapointIds(self):
+		"""Return all datapoint indices for training."""
+		return list(range(len(self._raw_data) * len(self.category_chunks)))
 
-    def loadQueriesAndAnnotationsFromDatapoint(self, idx):
-        """
-        Load queries and annotations for a specific datapoint.
+	def loadQueriesAndAnnotationsFromDatapoint(self, idx):
+		"""
+		Load queries and annotations for a specific datapoint.
 
-        Args:
-            idx (int): Datapoint index
+		Args:
+			idx (int): Datapoint index
 
-        Returns:
-            Tuple of (queries, annotations) lists
-        """
-        img_idx = idx // len(self.category_chunks)
-        chunk_idx = idx % len(self.category_chunks)
-        cat_chunk = self.category_chunks[chunk_idx]
+		Returns:
+			Tuple of (queries, annotations) lists
+		"""
+		img_idx = idx // len(self.category_chunks)
+		chunk_idx = idx % len(self.category_chunks)
+		cat_chunk = self.category_chunks[chunk_idx]
 
-        queries = []
-        annotations = []
+		queries = []
+		annotations = []
 
-        query_template = {
-            "id": None,
-            "original_cat_id": None,
-            "object_ids_output": None,
-            "query_text": None,
-            "query_processing_order": 0,
-            "ptr_x_query_id": None,
-            "ptr_y_query_id": None,
-            "image_id": 0,  # Single image per datapoint
-            "input_box": None,
-            "input_box_label": None,
-            "input_points": None,
-            "is_exhaustive": True,
-        }
+		query_template = {
+			"id": None,
+			"original_cat_id": None,
+			"object_ids_output": None,
+			"query_text": None,
+			"query_processing_order": 0,
+			"ptr_x_query_id": None,
+			"ptr_y_query_id": None,
+			"image_id": 0,  # Single image per datapoint
+			"input_box": None,
+			"input_box_label": None,
+			"input_points": None,
+			"is_exhaustive": True,
+		}
 
-        annot_template = {
-            "image_id": 0,
-            "bbox": None,  # Normalized bbox in xywh
-            "area": None,  # Unnormalized area
-            "segmentation": None,  # RLE encoded
-            "object_id": None,
-            "is_crowd": None,
-            "id": None,
-        }
+		annot_template = {
+			"image_id": 0,
+			"bbox": None,  # Normalized bbox in xywh
+			"area": None,  # Unnormalized area
+			"segmentation": None,  # RLE encoded
+			"object_id": None,
+			"is_crowd": None,
+			"id": None,
+		}
 
-        raw_annotations = self._raw_data[img_idx]["annotations"]
-        image_info = self._raw_data[img_idx]["image"]
-        width, height = image_info["width"], image_info["height"]
+		raw_annotations = self._raw_data[img_idx]["annotations"]
+		image_info = self._raw_data[img_idx]["image"]
+		width, height = image_info["width"], image_info["height"]
 
-        # Group annotations by category
-        cat_id_to_anns = defaultdict(list)
-        for ann in raw_annotations:
-            cat_id_to_anns[ann["category_id"]].append(ann)
+		# Group annotations by category
+		cat_id_to_anns = defaultdict(list)
+		for ann in raw_annotations:
+			cat_id_to_anns[ann["category_id"]].append(ann)
 
-        annotations_by_cat_sorted = [
-            (cat_id, cat_id_to_anns[cat_id]) for cat_id in cat_chunk
-        ]
+		annotations_by_cat_sorted = [
+			(cat_id, cat_id_to_anns[cat_id]) for cat_id in cat_chunk
+		]
 
-        for cat_id, anns in annotations_by_cat_sorted:
-            if len(anns) == 0 and not self.include_negatives:
-                continue
+		for cat_id, anns in annotations_by_cat_sorted:
+			if len(anns) == 0 and not self.include_negatives:
+				continue
 
-            cur_ann_ids = []
+			cur_ann_ids = []
 
-            # Create annotations for this category
-            for ann in anns:
-                annotation = annot_template.copy()
-                annotation["id"] = len(annotations)
-                annotation["object_id"] = annotation["id"]
-                annotation["is_crowd"] = ann["iscrowd"]
+			# Create annotations for this category
+			for ann in anns:
+				annotation = annot_template.copy()
+				annotation["id"] = len(annotations)
+				annotation["object_id"] = annotation["id"]
+				annotation["is_crowd"] = ann["iscrowd"]
 
-                normalized_boxes = convert_boxlist_to_normalized_tensor(
-                    [ann["bbox"]], width, height
-                )
-                bbox = normalized_boxes[0]
+				normalized_boxes = convert_boxlist_to_normalized_tensor(
+					[ann["bbox"]], width, height
+				)
+				bbox = normalized_boxes[0]
 
-                annotation["area"] = (bbox[2] * bbox[3]).item()
-                annotation["bbox"] = bbox
+				annotation["area"] = (bbox[2] * bbox[3]).item()
+				annotation["bbox"] = bbox
 
-                if (
-                    "segmentation" in ann
-                    and ann["segmentation"] is not None
-                    and ann["segmentation"] != []
-                ):
-                    annotation["segmentation"] = ann_to_rle(
-                        ann["segmentation"], im_info=image_info
-                    )
+				if (
+					"segmentation" in ann
+					and ann["segmentation"] is not None
+					and ann["segmentation"] != []
+				):
+					annotation["segmentation"] = ann_to_rle(
+						ann["segmentation"], im_info=image_info
+					)
 
-                annotations.append(annotation)
-                cur_ann_ids.append(annotation["id"])
+				annotations.append(annotation)
+				cur_ann_ids.append(annotation["id"])
 
-            # Create query for this category
-            query = query_template.copy()
-            query["id"] = len(queries)
-            query["original_cat_id"] = cat_id
+			# Create query for this category
+			query = query_template.copy()
+			query["id"] = len(queries)
+			query["original_cat_id"] = cat_id
 
-            # Determine query_text based on configuration priority:
-            # 1. Custom prompts (highest priority)
-            # 2. noun_phrase from annotations (if enabled)
-            # 3. Category name from COCO (default)
-            query_source = ""
-            if self.prompts is not None:
-                query["query_text"] = self.prompts[cat_id]
-                query_source = "CUSTOM_PROMPT"
-            elif self.use_noun_phrase_as_prompt and self._cat_id_to_noun_phrase is not None:
-                query["query_text"] = self._cat_id_to_noun_phrase.get(cat_id, self._cat_idx_to_text[cat_id])
-                query_source = "NOUN_PHRASE"
-            else:
-                query["query_text"] = self._cat_idx_to_text[cat_id]
-                query_source = "CATEGORY_NAME"
+			# Determine query_text based on configuration priority:
+			# 1. Custom prompts (highest priority)
+			# 2. noun_phrase from annotations (if enabled)
+			# 3. Category name from COCO (default)
+			query_source = ""
+			if self.prompts is not None:
+				query["query_text"] = self.prompts[cat_id]
+				query_source = "CUSTOM_PROMPT"
+			elif self.use_noun_phrase_as_prompt and self._cat_id_to_noun_phrase is not None:
+				query["query_text"] = self._cat_id_to_noun_phrase.get(cat_id, self._cat_idx_to_text[cat_id])
+				query_source = "NOUN_PHRASE"
+			else:
+				query["query_text"] = self._cat_idx_to_text[cat_id]
+				query_source = "CATEGORY_NAME"
 
-            # DEBUG: Print query text assignment (limited to first 3 datapoints)
-            if idx < 3:
-                print(f"DEBUG QUERY[idx={idx}]: cat_id={cat_id}, source={query_source}, query_text='{query['query_text']}', num_objects={len(cur_ann_ids)}")
+			# DEBUG: Print query text assignment (limited to first 3 datapoints)
+			if idx < 3 and self.debug_queries:
+				print(f"DEBUG QUERY[idx={idx}]: cat_id={cat_id}, source={query_source}, query_text='{query['query_text']}', num_objects={len(cur_ann_ids)}")
 
-            query["object_ids_output"] = cur_ann_ids
-            queries.append(query)
+			query["object_ids_output"] = cur_ann_ids
+			queries.append(query)
 
-        return queries, annotations
+		return queries, annotations
 
-    def loadImagesFromDatapoint(self, idx):
-        """
-        Load image information for a specific datapoint.
+	def loadImagesFromDatapoint(self, idx):
+		"""
+		Load image information for a specific datapoint.
 
-        Args:
-            idx (int): Datapoint index
+		Args:
+			idx (int): Datapoint index
 
-        Returns:
-            List containing image info dict
-        """
-        img_idx = idx // len(self.category_chunks)
-        img_data = self._raw_data[img_idx]["image"]
-        images = [
-            {
-                "id": 0,
-                "file_name": img_data["file_name"],
-                "original_img_id": img_data["id"],
-                "coco_img_id": img_data["id"],
-            }
-        ]
-        return images
+		Returns:
+			List containing image info dict
+		"""
+		img_idx = idx // len(self.category_chunks)
+		img_data = self._raw_data[img_idx]["image"]
+		images = [
+			{
+				"id": 0,
+				"file_name": img_data["file_name"],
+				"original_img_id": img_data["id"],
+				"coco_img_id": img_data["id"],
+			}
+		]
+		return images
 
 
 # ============================================================================
@@ -388,187 +391,187 @@ class COCO_FROM_JSON:
 
 
 class SAM3_EVAL_API_FROM_JSON_NP:
-    """
-    SAM3 evaluation API for loading noun phrase queries from JSON.
-    """
+	"""
+	SAM3 evaluation API for loading noun phrase queries from JSON.
+	"""
 
-    def __init__(self, annotation_file):
-        """
-        Initialize the SAM3 evaluation API.
+	def __init__(self, annotation_file):
+		"""
+		Initialize the SAM3 evaluation API.
 
-        Args:
-            annotation_file (str): Path to SAM3 JSON annotation file
-        """
-        with open(annotation_file, "r") as f:
-            data = json.load(f)
-        self._image_data = data["images"]
+		Args:
+			annotation_file (str): Path to SAM3 JSON annotation file
+		"""
+		with open(annotation_file, "r") as f:
+			data = json.load(f)
+		self._image_data = data["images"]
 
-    def getDatapointIds(self):
-        """Return all datapoint indices."""
-        return list(range(len(self._image_data)))
+	def getDatapointIds(self):
+		"""Return all datapoint indices."""
+		return list(range(len(self._image_data)))
 
-    def loadQueriesAndAnnotationsFromDatapoint(self, idx):
-        """
-        Load queries and annotations for a specific datapoint.
+	def loadQueriesAndAnnotationsFromDatapoint(self, idx):
+		"""
+		Load queries and annotations for a specific datapoint.
 
-        Args:
-            idx (int): Datapoint index
+		Args:
+			idx (int): Datapoint index
 
-        Returns:
-            Tuple of (queries, annotations) lists
-        """
-        cur_img_data = self._image_data[idx]
-        queries = []
-        annotations = []
+		Returns:
+			Tuple of (queries, annotations) lists
+		"""
+		cur_img_data = self._image_data[idx]
+		queries = []
+		annotations = []
 
-        query_template = {
-            "id": None,
-            "original_cat_id": None,
-            "object_ids_output": None,
-            "query_text": None,
-            "query_processing_order": 0,
-            "ptr_x_query_id": None,
-            "ptr_y_query_id": None,
-            "image_id": 0,
-            "input_box": None,
-            "input_box_label": None,
-            "input_points": None,
-            "is_exhaustive": True,
-        }
+		query_template = {
+			"id": None,
+			"original_cat_id": None,
+			"object_ids_output": None,
+			"query_text": None,
+			"query_processing_order": 0,
+			"ptr_x_query_id": None,
+			"ptr_y_query_id": None,
+			"image_id": 0,
+			"input_box": None,
+			"input_box_label": None,
+			"input_points": None,
+			"is_exhaustive": True,
+		}
 
-        # Create query
-        query = query_template.copy()
-        query["id"] = len(queries)
-        query["original_cat_id"] = int(cur_img_data["queried_category"])
-        query["query_text"] = cur_img_data["text_input"]
-        query["object_ids_output"] = []
-        queries.append(query)
+		# Create query
+		query = query_template.copy()
+		query["id"] = len(queries)
+		query["original_cat_id"] = int(cur_img_data["queried_category"])
+		query["query_text"] = cur_img_data["text_input"]
+		query["object_ids_output"] = []
+		queries.append(query)
 
-        return queries, annotations
+		return queries, annotations
 
-    def loadImagesFromDatapoint(self, idx):
-        """
-        Load image information for a specific datapoint.
+	def loadImagesFromDatapoint(self, idx):
+		"""
+		Load image information for a specific datapoint.
 
-        Args:
-            idx (int): Datapoint index
+		Args:
+			idx (int): Datapoint index
 
-        Returns:
-            List containing image info dict
-        """
-        img_data = self._image_data[idx]
-        images = [
-            {
-                "id": 0,
-                "file_name": img_data["file_name"],
-                "original_img_id": img_data["id"],
-                "coco_img_id": img_data["id"],
-            }
-        ]
-        return images
+		Returns:
+			List containing image info dict
+		"""
+		img_data = self._image_data[idx]
+		images = [
+			{
+				"id": 0,
+				"file_name": img_data["file_name"],
+				"original_img_id": img_data["id"],
+				"coco_img_id": img_data["id"],
+			}
+		]
+		return images
 
 
 class SAM3_VEVAL_API_FROM_JSON_NP:
-    """
-    SAM3 video evaluation API for loading noun phrase queries from JSON.
-    """
+	"""
+	SAM3 video evaluation API for loading noun phrase queries from JSON.
+	"""
 
-    def __init__(self, annotation_file):
-        """
-        Initialize the SAM3 video evaluation API.
+	def __init__(self, annotation_file):
+		"""
+		Initialize the SAM3 video evaluation API.
 
-        Args:
-            annotation_file (str): Path to SAM3 video JSON annotation file
-        """
-        with open(annotation_file, "r") as f:
-            data = json.load(f)
+		Args:
+			annotation_file (str): Path to SAM3 video JSON annotation file
+		"""
+		with open(annotation_file, "r") as f:
+			data = json.load(f)
 
-        assert "video_np_pairs" in data, "Incorrect data format"
+		assert "video_np_pairs" in data, "Incorrect data format"
 
-        self._video_data = data["videos"]
-        self._video_id_to_np_ids = defaultdict(list)
-        self._cat_id_to_np = {}
+		self._video_data = data["videos"]
+		self._video_id_to_np_ids = defaultdict(list)
+		self._cat_id_to_np = {}
 
-        for cat_dict in data["categories"]:
-            self._cat_id_to_np[cat_dict["id"]] = cat_dict["name"]
+		for cat_dict in data["categories"]:
+			self._cat_id_to_np[cat_dict["id"]] = cat_dict["name"]
 
-        for video_np_dict in data["video_np_pairs"]:
-            self._video_id_to_np_ids[video_np_dict["video_id"]].append(
-                video_np_dict["category_id"]
-            )
-            assert (
-                self._cat_id_to_np[video_np_dict["category_id"]]
-                == video_np_dict["noun_phrase"]
-            ), "Category name does not match text input"
+		for video_np_dict in data["video_np_pairs"]:
+			self._video_id_to_np_ids[video_np_dict["video_id"]].append(
+				video_np_dict["category_id"]
+			)
+			assert (
+				self._cat_id_to_np[video_np_dict["category_id"]]
+				== video_np_dict["noun_phrase"]
+			), "Category name does not match text input"
 
-    def getDatapointIds(self):
-        """Return all datapoint indices."""
-        return list(range(len(self._video_data)))
+	def getDatapointIds(self):
+		"""Return all datapoint indices."""
+		return list(range(len(self._video_data)))
 
-    def loadQueriesAndAnnotationsFromDatapoint(self, idx):
-        """
-        Load queries and annotations for a specific video datapoint.
+	def loadQueriesAndAnnotationsFromDatapoint(self, idx):
+		"""
+		Load queries and annotations for a specific video datapoint.
 
-        Args:
-            idx (int): Datapoint index
+		Args:
+			idx (int): Datapoint index
 
-        Returns:
-            Tuple of (queries, annotations) lists
-        """
-        cur_vid_data = self._video_data[idx]
-        queries = []
-        annotations = []
+		Returns:
+			Tuple of (queries, annotations) lists
+		"""
+		cur_vid_data = self._video_data[idx]
+		queries = []
+		annotations = []
 
-        query_template = {
-            "id": None,
-            "original_cat_id": None,
-            "object_ids_output": None,
-            "query_text": None,
-            "query_processing_order": 0,
-            "ptr_x_query_id": None,
-            "ptr_y_query_id": None,
-            "image_id": 0,
-            "input_box": None,
-            "input_box_label": None,
-            "input_points": None,
-            "is_exhaustive": True,
-        }
+		query_template = {
+			"id": None,
+			"original_cat_id": None,
+			"object_ids_output": None,
+			"query_text": None,
+			"query_processing_order": 0,
+			"ptr_x_query_id": None,
+			"ptr_y_query_id": None,
+			"image_id": 0,
+			"input_box": None,
+			"input_box_label": None,
+			"input_points": None,
+			"is_exhaustive": True,
+		}
 
-        all_np_ids = self._video_id_to_np_ids[cur_vid_data["id"]]
+		all_np_ids = self._video_id_to_np_ids[cur_vid_data["id"]]
 
-        for np_id in all_np_ids:
-            text_input = self._cat_id_to_np[np_id]
+		for np_id in all_np_ids:
+			text_input = self._cat_id_to_np[np_id]
 
-            for i, image_path in enumerate(cur_vid_data["file_names"]):
-                query = query_template.copy()
-                query["id"] = len(queries)
-                query["original_cat_id"] = np_id
-                query["query_text"] = text_input
-                query["image_id"] = i
-                query["query_processing_order"] = i
-                query["object_ids_output"] = []
-                queries.append(query)
+			for i, image_path in enumerate(cur_vid_data["file_names"]):
+				query = query_template.copy()
+				query["id"] = len(queries)
+				query["original_cat_id"] = np_id
+				query["query_text"] = text_input
+				query["image_id"] = i
+				query["query_processing_order"] = i
+				query["object_ids_output"] = []
+				queries.append(query)
 
-        return queries, annotations
+		return queries, annotations
 
-    def loadImagesFromDatapoint(self, idx):
-        """
-        Load image information for a specific video datapoint.
+	def loadImagesFromDatapoint(self, idx):
+		"""
+		Load image information for a specific video datapoint.
 
-        Args:
-            idx (int): Datapoint index
+		Args:
+			idx (int): Datapoint index
 
-        Returns:
-            List containing image info dicts for all frames
-        """
-        video_data = self._video_data[idx]
-        images = [
-            {
-                "id": i,
-                "file_name": file_name,
-                "original_img_id": video_data["id"],
-                "coco_img_id": video_data["id"],
-            }
-            for i, file_name in enumerate(video_data["file_names"])
-        ]
-        return images
+		Returns:
+			List containing image info dicts for all frames
+		"""
+		video_data = self._video_data[idx]
+		images = [
+			{
+				"id": i,
+				"file_name": file_name,
+				"original_img_id": video_data["id"],
+				"coco_img_id": video_data["id"],
+			}
+			for i, file_name in enumerate(video_data["file_names"])
+		]
+		return images
