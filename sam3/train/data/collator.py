@@ -99,7 +99,7 @@ def debug_print_batch_sample(
     # Print to both console and logger
     if verbose:
         print(output)
-    DEBUG_COLLECTOR_LOG.debug(output)
+        DEBUG_COLLECTOR_LOG.debug(output)
 
 
 def convert_my_tensors(obj):
@@ -224,6 +224,7 @@ def collate_fn_api(
     input_points_embedding_dim=257,
     repeats: int = 0,
     load_image_in_fp16: bool = False,
+    debug_batch: bool = False,
 ):
     # DEBUG: Print batch summary
     unique_query_texts = set()
@@ -233,9 +234,10 @@ def collate_fn_api(
             unique_query_texts.add(q.query_text)
             total_objects += len(q.object_ids_output)
 
-    debug_batch_summary = f"\n{'#'*80}\nDEBUG COLLECT FN: batch_size={len(batch)}, unique_queries={len(unique_query_texts)}, total_objects={total_objects}\nUnique query texts: {sorted(unique_query_texts)}\n{'#'*80}"
-    print(debug_batch_summary)
-    DEBUG_COLLECTOR_LOG.debug(debug_batch_summary)
+    if debug_batch:
+        debug_batch_summary = f"\n{'#'*80}\nDEBUG COLLECT FN: batch_size={len(batch)}, unique_queries={len(unique_query_texts)}, total_objects={total_objects}\nUnique query texts: {sorted(unique_query_texts)}\n{'#'*80}"
+        print(debug_batch_summary)
+        DEBUG_COLLECTOR_LOG.debug(debug_batch_summary)
 
     # img_batch = torch.stack(sum([[img.data for img in v.images] for v in batch], []))
     img_batch = []

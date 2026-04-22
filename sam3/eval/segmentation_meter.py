@@ -147,11 +147,19 @@ class SegmentationMeter:
         else:
             preds = find_stages
 
-        # Get predicted masks - typically shape [B, N, H, W] or [B, N, 1, H, W]
-        pred_masks = preds.get("masks", None)
+        # Get predicted masks - shape [B, N, 1, H, W] or [B, N, H, W]
+        # The segmentation head outputs "pred_masks", not "masks"
+        pred_masks = preds.get("pred_masks", None)
         if pred_masks is None:
-            logging.warning(f"No predicted masks found in model output")
+            logging.warning(
+                f"No predicted masks found in model output. "
+                f"Available keys: {list(preds.keys()) if isinstance(preds, dict) else type(preds)}"
+            )
             return
+
+        # Squeeze the mask dimension if present: [B, N, 1, H, W] -> [B, N, H, W]
+        if pred_masks.dim() == 5 and pred_masks.shape[2] == 1:
+            pred_masks = pred_masks.squeeze(2)
 
         # Get presence scores to filter out empty predictions
         presence_scores = preds.get("objectness_ptr", None)
@@ -461,9 +469,13 @@ class SimpleSegmentationMeter:
         else:
             preds = find_stages
 
-        pred_masks = preds.get("masks", None)
+        pred_masks = preds.get("pred_masks", None)
         if pred_masks is None:
             return
+
+        # Squeeze the mask dimension if present: [B, N, 1, H, W] -> [B, N, H, W]
+        if pred_masks.dim() == 5 and pred_masks.shape[2] == 1:
+            pred_masks = pred_masks.squeeze(2)
 
         # Get presence scores
         presence_scores = preds.get("objectness_ptr", None)
