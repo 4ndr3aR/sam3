@@ -101,20 +101,32 @@ class SegmentationMeter:
         # batch is a BatchedDatapoint, masks are in find_targets
         find_targets = getattr(batch, "find_targets", None)
         if find_targets is None or len(find_targets) == 0:
-            logging.warning(f"No find_targets found in batch for key={key}")
+            logging.warning(
+                f"No find_targets found in batch for key={key}. "
+                f"find_targets={find_targets}. "
+                f"This may indicate validation batches are not loading ground truth segments. "
+                f"Check your dataloader configuration - ensure find_targets with segments is populated for validation."
+            )
             return
 
         # Use stage 0 (first stage queries) for ground truth masks
         stage_targets = find_targets[0]
         gt_masks = getattr(stage_targets, "segments", None)
         if gt_masks is None:
-            logging.warning(f"No segmentation masks in find_targets for key={key}")
+            logging.warning(
+                f"No segmentation masks in find_targets for key={key}. "
+                f"stage_targets attributes: {[attr for attr in dir(stage_targets) if not attr.startswith('_')]}. "
+                f"Check if segments are being populated in your data loader."
+            )
             return
 
         # Get num_boxes to know how many masks per image
         num_boxes = getattr(stage_targets, "num_boxes", None)
         if num_boxes is None:
-            logging.warning(f"No num_boxes in find_targets for key={key}")
+            logging.warning(
+                f"No num_boxes in find_targets for key={key}. "
+                f"stage_targets.segments shape: {gt_masks.shape if hasattr(gt_masks, 'shape') else 'N/A'}"
+            )
             return
 
         # Organize masks by image
@@ -194,12 +206,13 @@ class SegmentationMeter:
             best_pred_idx = -1
 
             # Find best matching prediction
-            for pred_idx in sorted_indices:
+            for pred_idx_t in sorted_indices:
+                pred_idx = pred_idx_t.item()  # Convert tensor to int for set membership
                 if pred_idx in matched_preds:
                     continue
 
                 # Compute IoU
-                pred_mask = pred_binary[pred_idx]
+                pred_mask = pred_binary[pred_idx_t]
 
                 # Handle different dtypes
                 if gt_mask.dtype == torch.bool:
@@ -207,8 +220,8 @@ class SegmentationMeter:
                 else:
                     gt_bool = gt_mask > 0.5
 
-                intersection = (gt_bool & pred_bool[pred_idx]).sum().float()
-                union = (gt_bool | pred_bool[pred_idx]).sum().float()
+                intersection = (gt_bool & pred_mask).sum().float()
+                union = (gt_bool | pred_mask).sum().float()
 
                 if union > 0:
                     iou = intersection / union
@@ -217,7 +230,7 @@ class SegmentationMeter:
 
                 if iou > best_iou:
                     best_iou = iou
-                    best_pred_idx = pred_idx.item()
+                    best_pred_idx = pred_idx
 
             # Check if best match meets threshold
             if best_iou >= self.iou_threshold and best_pred_idx >= 0:
