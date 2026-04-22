@@ -182,6 +182,29 @@ class SegmentationMeter:
             else:
                 img_scores = torch.ones(pred_img_masks.shape[0])
 
+            # Resize predictions to match ground truth if needed
+            if len(gt_img_masks) > 0:
+                gt_h, gt_w = gt_img_masks[0].shape[0], gt_img_masks[0].shape[1]
+                pred_h, pred_w = pred_img_masks.shape[-2], pred_img_masks.shape[-1]
+
+                if gt_h != pred_h or gt_w != pred_w:
+                    # Ensure pred_img_masks is 3D [N, H, W]
+                    if pred_img_masks.dim() == 4 and pred_img_masks.shape[1] == 1:
+                        pred_img_masks = pred_img_masks.squeeze(1)
+
+                    # Resize each prediction mask
+                    resized_preds = []
+                    for p in pred_img_masks:
+                        p_unsqueezed = p.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+                        p_resized = torch.nn.functional.interpolate(
+                            p_unsqueezed.float(),
+                            size=(gt_h, gt_w),
+                            mode='bilinear',
+                            align_corners=False
+                        )
+                        resized_preds.append(p_resized.squeeze(0).squeeze(0))
+                    pred_img_masks = torch.stack(resized_preds)
+
             self._process_image(gt_img_masks, pred_img_masks, img_scores)
 
     def _process_image(
@@ -245,9 +268,9 @@ class SegmentationMeter:
                 matched_preds.add(best_pred_idx)
                 matched_gts.add(gt_idx)
                 self._true_positives += 1
-                self._image_ious.append(best_iou)
+                self._image_ious.append(best_iou.item())
                 dice = 2 * best_iou / (best_iou + 1) if best_iou > 0 else 0.0
-                self._image_dices.append(dice)
+                self._image_dices.append(dice.item())
 
                 # Accumulate for mean IoU/Dice
                 gt_mask = gt_masks[gt_idx]
@@ -489,6 +512,25 @@ class SimpleSegmentationMeter:
 
             if pred_img_masks.dim() == 4 and pred_img_masks.shape[1] == 1:
                 pred_img_masks = pred_img_masks.squeeze(1)
+
+            # Resize predictions to match ground truth if needed
+            if len(gt_img_masks) > 0:
+                gt_h, gt_w = gt_img_masks[0].shape[0], gt_img_masks[0].shape[1]
+                pred_h, pred_w = pred_img_masks.shape[-2], pred_img_masks.shape[-1]
+
+                if gt_h != pred_h or gt_w != pred_w:
+                    # Resize each prediction mask
+                    resized_preds = []
+                    for p in pred_img_masks:
+                        p_unsqueezed = p.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+                        p_resized = torch.nn.functional.interpolate(
+                            p_unsqueezed.float(),
+                            size=(gt_h, gt_w),
+                            mode='bilinear',
+                            align_corners=False
+                        )
+                        resized_preds.append(p_resized.squeeze(0).squeeze(0))
+                    pred_img_masks = torch.stack(resized_preds)
 
             # Filter predictions by presence score (threshold 0.5)
             if presence_scores is not None:
