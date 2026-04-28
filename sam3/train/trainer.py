@@ -640,6 +640,10 @@ class Trainer:
         if not self.val_dataset:
             return
 
+        # Clear fragmentation from training before val begins
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         dataloader = self.val_dataset.get_loader(epoch=int(self.epoch))
         outs = self.val_epoch(dataloader, phase=Phase.VAL)
         del dataloader
