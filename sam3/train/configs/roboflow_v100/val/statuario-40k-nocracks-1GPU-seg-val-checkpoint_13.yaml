@@ -1,0 +1,320 @@
+# @package _global_
+defaults:
+  - _self_
+
+# ============================================================================
+# Paths Configuration (Chage this to your own paths)
+# ============================================================================
+paths:
+  statuario-40k-nocracks_val:   /mnt/raid1/dataset/surface-damage-segmentation/sam3-video-dataset-v2-phase-5
+  statuario-40k-nocracks_anno:  /mnt/raid1/dataset/surface-damage-segmentation/sam3-video-dataset-v2-phase-5
+  experiment_log_dir: /mnt/raid1/repos/sam3/logs/statuario-40k-nocracks-1GPU-seg-val/single-checkpoints/13
+  bpe_path: /mnt/raid1/repos/sam3/sam3/assets/bpe_simple_vocab_16e6.txt.gz
+
+# Roboflow dataset configuration
+coco_train:
+  num_images: null # Note: This is the number of images used for training. If null, all images are used.
+  #num_images: 100 # Note: This is the number of images used for training. If null, all images are used (100k+ for COCO, lower the number for debugging purposes).
+  supercategory: statuario-40k-nocracks-1GPU-seg
+  max_queries: 70 # max predicted objects... this is what makes CUDA memory explode (because of attention). With 200 @ 1008px and segmentation=True, OOM on a 48 Gb GPU.
+  #hardcoded_img_resolution: 672
+  hardcoded_img_resolution: 1008 # (see model_builder.py) img resolution... this also makes CUDA memory explode (because of attention), but downscaling everything is a pain in the ass
+
+  # ====================
+  # PROMPT CONFIGURATION
+  # ====================
+  # CRITICAL: This is likely the root cause of "monument" not working!
+  # Your dataset has categories with names like "Rocky coastal temple", "Coastal temple structure", etc.
+  # BUT all annotations have noun_phrase="monument"
+  # By default, training uses category.name as the prompt, NOT noun_phrase
+  # Set use_noun_phrase_as_prompt: true to train with "monument" instead
+  coco_json_loader_kwargs:
+    use_noun_phrase_as_prompt: false # false = use category.name, true = use noun_phrase from annotations
+    noun_phrase_mode: "all_monument"  # Options: "unique" (first unique per cat), "all_monument" (force all to "monument"), "per_annotation"
+
+  # Training transforms pipeline
+  train_transforms:
+    - _target_: sam3.train.transforms.basic_for_api.ComposeAPI
+      transforms:
+        - _target_: sam3.train.transforms.filter_query_transforms.FlexibleFilterFindGetQueries
+          query_filter:
+            _target_: sam3.train.transforms.filter_query_transforms.FilterCrowds
+        - _target_: sam3.train.transforms.point_sampling.RandomizeInputBbox
+          box_noise_std: 0.1
+          box_noise_max: 20
+        - _target_: sam3.train.transforms.segmentation.DecodeRle
+        - _target_: sam3.train.transforms.basic_for_api.RandomResizeAPI
+          sizes:
+            _target_: sam3.train.transforms.basic.get_random_resize_scales
+            size: ${scratch.resolution}
+            min_size: 480
+            rounded: false
+          max_size:
+            _target_: sam3.train.transforms.basic.get_random_resize_max_size
+            size: ${scratch.resolution}
+          square: true
+          consistent_transform: ${scratch.consistent_transform}
+        - _target_: sam3.train.transforms.basic_for_api.PadToSizeAPI
+          size: ${scratch.resolution}
+          consistent_transform: ${scratch.consistent_transform}
+        - _target_: sam3.train.transforms.basic_for_api.ToTensorAPI
+        - _target_: sam3.train.transforms.filter_query_transforms.FlexibleFilterFindGetQueries
+          query_filter:
+            _target_: sam3.train.transforms.filter_query_transforms.FilterEmptyTargets
+        - _target_: sam3.train.transforms.basic_for_api.NormalizeAPI
+          mean: ${scratch.train_norm_mean}
+          std: ${scratch.train_norm_std}
+        - _target_: sam3.train.transforms.filter_query_transforms.FlexibleFilterFindGetQueries
+          query_filter:
+            _target_: sam3.train.transforms.filter_query_transforms.FilterEmptyTargets
+    - _target_: sam3.train.transforms.filter_query_transforms.FlexibleFilterFindGetQueries
+      query_filter:
+        _target_: sam3.train.transforms.filter_query_transforms.FilterFindQueriesWithTooManyOut
+        max_num_objects: ${scratch.max_ann_per_img}
+
+  # Validation transforms pipeline
+  val_transforms:
+    - _target_: sam3.train.transforms.basic_for_api.ComposeAPI
+      transforms:
+        - _target_: sam3.train.transforms.segmentation.DecodeRle
+        - _target_: sam3.train.transforms.basic_for_api.RandomResizeAPI
+          sizes: ${scratch.resolution}
+          max_size:
+            _target_: sam3.train.transforms.basic.get_random_resize_max_size
+            size: ${scratch.resolution}
+          square: true
+          consistent_transform: False
+        - _target_: sam3.train.transforms.basic_for_api.ToTensorAPI
+        - _target_: sam3.train.transforms.basic_for_api.NormalizeAPI
+          mean: ${scratch.train_norm_mean}
+          std: ${scratch.train_norm_std}
+
+  loss:
+    all:
+      _target_: sam3.train.loss.sam3_loss.DummyLoss
+    default:
+      _target_: sam3.train.loss.sam3_loss.DummyLoss
+
+# ============================================================================
+# Different helper parameters and functions
+# ============================================================================
+scratch:
+  #enable_segmentation: False # NOTE: This is the number of queries used for segmentation
+  enable_segmentation: True
+  # Model parameters
+  d_model: 256
+  pos_embed:
+    _target_: sam3.model.position_encoding.PositionEmbeddingSine
+    num_pos_feats: ${scratch.d_model}
+    normalize: true
+    scale: null
+    temperature: 10000
+
+  # Box processing
+  use_presence_eval: True
+  original_box_postprocessor:
+    _target_: sam3.eval.postprocessors.PostProcessImage
+    max_dets_per_img: -1  # infinite detections
+    use_original_ids: true
+    use_original_sizes_box: true
+    use_presence: ${scratch.use_presence_eval}
+
+  # Matcher configuration
+  matcher:
+    _target_: sam3.train.matcher.BinaryHungarianMatcherV2
+    focal: true  # with `focal: true` it is equivalent to BinaryFocalHungarianMatcher
+    cost_class: 2.0
+    cost_bbox: 5.0
+    cost_giou: 2.0
+    alpha: 0.25
+    gamma: 2
+    stable: False
+  scale_by_find_batch_size: True
+
+  # Image processing parameters
+  #resolution: 1008
+  resolution: ${coco_train.hardcoded_img_resolution}
+  consistent_transform: False
+  max_ann_per_img: ${coco_train.max_queries}
+
+  # Normalization parameters
+  train_norm_mean: [0.5, 0.5, 0.5]
+  train_norm_std: [0.5, 0.5, 0.5]
+  val_norm_mean: [0.5, 0.5, 0.5]
+  val_norm_std: [0.5, 0.5, 0.5]
+
+  # Training parameters
+  num_train_workers: 2 # because of: "RuntimeError: received 0 items of ancdata"
+  num_val_workers: 2 # suggested by Claude, to alleviate OOM/memory leak issues during validation
+  max_data_epochs: 50
+  target_epoch_size: 1500
+  hybrid_repeats: 1
+  context_length: 2
+  gather_pred_via_filesys: false
+
+  # Learning rate and scheduler parameters
+  lr_scale: 0.1
+  lr_transformer: ${times:8e-4,${scratch.lr_scale}}
+  lr_vision_backbone: ${times:2.5e-4,${scratch.lr_scale}}
+  lr_language_backbone: ${times:5e-5,${scratch.lr_scale}}
+  lrd_vision_backbone: 0.9
+  wd: 0.1
+  scheduler_timescale: 20
+  scheduler_warmup: 20
+  scheduler_cooldown: 20
+
+  global_batch_size: 32
+  gradient_accumulation_steps: 8
+
+  train_batch_size: ${scratch.global_batch_size}
+  collate_fn:
+    #_target_: sam3.train.data.collator.collate_fn_api
+    _target_: sam3.train.data.collator.collate_fn_api_with_chunking
+    num_chunks: ${scratch.gradient_accumulation_steps}
+    _partial_: true
+    repeats: ${scratch.hybrid_repeats}
+    dict_key: all
+    with_seg_masks: ${scratch.enable_segmentation} # Note: Set this to true if using segmentation masks!
+
+  val_batch_size: ${scratch.global_batch_size}
+  collate_fn_val:
+    _target_: sam3.train.data.collator.collate_fn_api
+    #_target_: sam3.train.data.collator.collate_fn_api_with_chunking
+    #num_chunks: ${scratch.gradient_accumulation_steps}
+    _partial_: true
+    repeats: ${scratch.hybrid_repeats}
+    dict_key: coco100 # what the hell is this?!
+    with_seg_masks: ${scratch.enable_segmentation} # Note: Set this to true if using segmentation masks!
+
+
+# ============================================================================
+# Trainer Configuration
+# ============================================================================
+
+trainer:
+
+  _target_: sam3.train.trainer.Trainer
+  skip_saving_ckpts: True
+  empty_gpu_mem_cache_after_eval: True
+  skip_first_val: false
+  max_epochs: 20
+  accelerator: cuda
+  seed_value: 2026
+  val_epoch_freq: 1
+  mode: val
+  gradient_accumulation_steps: ${scratch.gradient_accumulation_steps}
+
+  distributed:
+    backend: nccl
+    find_unused_parameters: True
+    gradient_as_bucket_view: True
+
+  loss:
+    all: ${coco_train.loss}
+    default:
+      _target_: sam3.train.loss.sam3_loss.DummyLoss
+
+  data:
+    train: null
+    val:
+      _target_: sam3.train.data.torch_dataset.TorchDataset
+      dataset:
+        _target_: sam3.train.data.sam3_image_dataset.Sam3ImageDataset
+        load_segmentation: ${scratch.enable_segmentation}
+        coco_json_loader:
+          _target_: sam3.train.data.coco_json_loaders.COCO_FROM_JSON
+          include_negatives: true
+          category_chunk_size: 4 # Note: You can increase this based on the memory of your GPU.
+          _partial_: true
+        img_folder: ${paths.statuario-40k-nocracks_val}/
+        ann_file: ${paths.statuario-40k-nocracks_anno}/annotations-valid-instdedupe.json
+        transforms: ${coco_train.val_transforms}
+        max_ann_per_img: ${coco_train.max_queries}
+        multiplier: 1
+        training: false
+        coco_json_loader_kwargs: ${coco_train.coco_json_loader_kwargs}  # Pass noun_phrase settings for consistency
+
+      shuffle: False
+      batch_size: ${scratch.val_batch_size}
+      num_workers: ${scratch.num_val_workers}
+      pin_memory: false # not needed during validation and causes OOM (RAM)
+      drop_last: False
+      collate_fn: ${scratch.collate_fn_val}
+
+
+  model:
+    _target_: sam3.model_builder.build_sam3_image_model
+    bpe_path: ${paths.bpe_path}
+    device: cuda
+    eval_mode: true
+    freeze_backbone: true # Deprecated - use individual options
+    freeze_vision_backbone: true  # Keep vision features fixed (efficient)
+    freeze_language_backbone: true  # Keep language backbone frozen
+    enable_segmentation: ${scratch.enable_segmentation}
+    compile: true
+    #freeze_first_n_decoder_layers: 3
+
+  meters:
+    val:
+      coco100:
+        detection:
+          _target_: sam3.eval.coco_writer.PredictionDumper
+          iou_type: "bbox"
+          dump_dir: ${launcher.experiment_log_dir}/dumps/coco/${coco_train.supercategory}
+          merge_predictions: True
+          postprocessor: ${scratch.original_box_postprocessor}
+          gather_pred_via_filesys: ${scratch.gather_pred_via_filesys}
+          maxdets: ${coco_train.max_queries}
+          pred_file_evaluators:
+            - _target_: sam3.eval.coco_eval_offline.CocoEvaluatorOfflineWithPredFileEvaluators
+              gt_path: ${paths.statuario-40k-nocracks_anno}/annotations-valid-instdedupe.json
+              tide: False
+              iou_type: "bbox"
+        segmentation:
+          _target_: sam3.eval.segmentation_meter.SegmentationMeter
+          iou_threshold: 0.5
+          name: "seg"
+
+  optim:
+    amp:
+      enabled: True
+      amp_dtype: bfloat16
+
+  checkpoint:
+    save_dir: ${launcher.experiment_log_dir}
+    save_freq: 1  # 0 only last checkpoint is saved.
+
+  logging:
+    tensorboard_writer:
+      _target_: sam3.train.utils.logger.make_tensorboard_logger
+      log_dir: ${launcher.experiment_log_dir}/tensorboard
+      flush_secs: 120
+      should_log: True
+    wandb_writer: null
+    log_dir: ${launcher.experiment_log_dir}/logs/${coco_train.supercategory}
+    log_freq: 10
+
+# ============================================================================
+# Launcher and Submitit Configuration
+# ============================================================================
+
+launcher:
+  num_nodes: 1
+  gpus_per_node: 1
+  experiment_log_dir: ${paths.experiment_log_dir}
+  multiprocessing_context: forkserver
+
+submitit:
+  account: null
+  partition: null
+  qos: null
+  timeout_hour: 72
+  use_cluster: False
+  cpus_per_task: 10
+  port_range: [10000, 65000]
+  constraint: null
+  # Uncomment for job array configuration
+  #job_array:
+  #  num_tasks: 2
+  #  task_index: 0
+
