@@ -96,6 +96,9 @@ class SegmentationMeter:
         # If score_source_missing is positive, the meter is assigning score=1
         # to every query, so every threshold bucket will be identical.
         self._score_source_missing = 0
+        self._score_source_tensor = 0
+        self._score_source_postprocessed = 0
+        self._score_source_mask_confidence = 0
         self._score_count = 0
         self._score_sum = 0.0
         self._score_min = float("inf")
@@ -126,7 +129,9 @@ class SegmentationMeter:
             key: Batch key (e.g., "coco100").
         """
 
-        del find_metadatas, model  # unused, kept for interface compatibility
+        # find_metadatas and model are intentionally kept: when raw model outputs
+        # do not expose scores, some training stacks provide COCO-style scores
+        # only through a postprocessor attached to the model/evaluator.
 
         stage_targets = self._get_stage_targets(batch=batch, key=key)
         if stage_targets is None:
@@ -170,7 +175,15 @@ class SegmentationMeter:
             return
 
         pred_masks = self._normalize_pred_masks(pred_masks)
-        pred_scores = self._extract_prediction_scores(preds=preds, pred_masks=pred_masks)
+        pred_scores = self._extract_prediction_scores(
+            preds=preds,
+            pred_masks=pred_masks,
+            find_stages=find_stages,
+            find_metadatas=find_metadatas,
+            model=model,
+            batch=batch,
+            key=key,
+        )
 
         num_gt_images = len(masks_by_image)
         num_pred_images = pred_masks.shape[0]
@@ -306,56 +319,290 @@ class SegmentationMeter:
         self,
         preds: Dict[str, Any],
         pred_masks: torch.Tensor,
+        find_stages: Any = None,
+        find_metadatas: Optional[List[Dict]] = None,
+        model: Any = None,
+        batch: Any = None,
+        key: Optional[str] = None,
     ) -> torch.Tensor:
-        """Return scores as [num_images, num_queries] probabilities in [0, 1]."""
-        candidate_keys = (
+        """Return scores as [num_images, num_queries] probabilities in [0, 1].
+
+        COCO evaluation does not compute confidence scores inside coco_eval.py:
+        it receives postprocessed predictions and then reads prediction["scores"].
+        During training, this meter sees raw find-stage outputs instead. We
+        therefore try, in order:
+          1. score/objectness tensors in the raw nested prediction dict;
+          2. COCO-style postprocessed prediction containers, when available;
+          3. a clearly marked mask-confidence fallback.
+
+        The fallback is not COCO-equivalent, but it is much better than silently
+        assigning score=1 to every query because it makes threshold sweeps
+        informative and exposes the issue through diagnostics.
+        """
+        scores = self._find_score_tensor_in_nested_predictions(preds, pred_masks)
+        if scores is not None:
+            self._score_source_tensor += int(pred_masks.shape[0] * pred_masks.shape[1])
+            return scores
+
+        scores = self._try_postprocessed_scores(
+            preds=preds,
+            pred_masks=pred_masks,
+            find_stages=find_stages,
+            find_metadatas=find_metadatas,
+            model=model,
+            batch=batch,
+            key=key,
+        )
+        if scores is not None:
+            self._score_source_postprocessed += int(pred_masks.shape[0] * pred_masks.shape[1])
+            return scores
+
+        # Last-resort fallback: use the mask logit's own foreground confidence.
+        # For each query, this is the maximum foreground probability over pixels.
+        # This is NOT the same as the COCO detection score, but avoids the old
+        # pathological behavior where every query received score=1.0.
+        fallback_scores = self._mask_confidence_scores(pred_masks)
+        n = int(pred_masks.shape[0] * pred_masks.shape[1])
+        self._score_source_missing += n
+        self._score_source_mask_confidence += n
+        logging.warning(
+            "SegmentationMeter(%s): no raw or postprocessed detection scores found for key=%s. "
+            "Using mask-confidence fallback. Available top-level prediction keys: %s",
+            self.name,
+            key,
+            sorted(str(k) for k in preds.keys()),
+        )
+        return fallback_scores
+
+    def _find_score_tensor_in_nested_predictions(
+        self,
+        preds: Dict[str, Any],
+        pred_masks: torch.Tensor,
+    ) -> Optional[torch.Tensor]:
+        """Find a score tensor in raw predictions, including nested dicts/lists."""
+        score_key_fragments = (
+            "score",
             "objectness",
-            "objectness_logits",
-            "objectness_scores",
-            "objectness_ptr",
-            "scores",
-            "pred_scores",
+            "confidence",
+            "conf",
+            "prob",
+        )
+        bad_key_fragments = (
+            "mask",
+            "box",
+            "bbox",
+            "iou",
+            "loss",
+            "label",
+            "class",
+            "coord",
+            "point",
+            "pos",
+            "embed",
+            "feature",
         )
 
-        scores: Optional[torch.Tensor] = None
-        for key in candidate_keys:
-            value = preds.get(key, None)
-            if value is not None:
-                scores = value
-                break
+        candidates: List[Tuple[int, str, torch.Tensor]] = []
 
-        if scores is None:
-            # No objectness/score tensor was exposed by the model output. In this
-            # fallback every prediction slot is considered equally confident, so
-            # all score-threshold buckets will keep the same predictions.
-            self._score_source_missing += int(pred_masks.shape[0] * pred_masks.shape[1])
-            return torch.ones(
-                pred_masks.shape[:2],
-                dtype=pred_masks.dtype,
-                device=pred_masks.device,
-            )
+        def visit(obj: Any, path: str) -> None:
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    k_str = str(k)
+                    visit(v, f"{path}.{k_str}" if path else k_str)
+                return
+            if isinstance(obj, (list, tuple)):
+                # A COCO-style list of per-image dicts with variable-length
+                # detections is handled separately in _try_postprocessed_scores.
+                for i, v in enumerate(obj):
+                    if isinstance(v, (dict, list, tuple)):
+                        visit(v, f"{path}[{i}]")
+                return
+            if not isinstance(obj, torch.Tensor):
+                return
 
-        if not isinstance(scores, torch.Tensor):
-            scores = torch.as_tensor(scores, dtype=pred_masks.dtype, device=pred_masks.device)
-        else:
-            scores = scores.to(device=pred_masks.device, dtype=pred_masks.dtype)
+            lower_path = path.lower()
+            if not any(fragment in lower_path for fragment in score_key_fragments):
+                return
+            if any(fragment in lower_path for fragment in bad_key_fragments):
+                return
+
+            force_sigmoid = "logit" in lower_path
+            normalized = self._normalize_score_tensor(obj, pred_masks, force_sigmoid=force_sigmoid)
+            if normalized is not None:
+                # Prefer explicit objectness/confidence over generic scores.
+                priority = 0
+                if "objectness" in lower_path:
+                    priority -= 20
+                if "confidence" in lower_path or lower_path.endswith("conf"):
+                    priority -= 10
+                if lower_path.endswith("scores") or lower_path.endswith("score"):
+                    priority -= 5
+                priority += len(lower_path)
+                candidates.append((priority, path, normalized))
+
+        visit(preds, "")
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda x: x[0])
+        _, path, scores = candidates[0]
+        logging.debug(
+            "SegmentationMeter(%s): using prediction score tensor at '%s'.",
+            self.name,
+            path,
+        )
+        return scores
+
+    def _normalize_score_tensor(
+        self,
+        scores: torch.Tensor,
+        pred_masks: torch.Tensor,
+        force_sigmoid: bool = False,
+    ) -> Optional[torch.Tensor]:
+        """Normalize a candidate score tensor to [num_images, num_queries]."""
+        scores = scores.to(device=pred_masks.device, dtype=pred_masks.dtype)
+        n_img, n_query = int(pred_masks.shape[0]), int(pred_masks.shape[1])
 
         while scores.dim() > 2 and scores.shape[-1] == 1:
             scores = scores.squeeze(-1)
 
+        if scores.dim() == 0:
+            return None
         if scores.dim() == 1:
-            scores = scores.unsqueeze(0)
-        elif scores.dim() > 2:
-            # Collapse any trailing feature dimension conservatively.
-            scores = scores.reshape(scores.shape[0], scores.shape[1], -1).mean(-1)
+            if scores.numel() == n_query and n_img == 1:
+                scores = scores.unsqueeze(0)
+            elif scores.numel() == n_img * n_query:
+                scores = scores.reshape(n_img, n_query)
+            else:
+                return None
+        elif scores.dim() == 2:
+            if tuple(scores.shape) == (n_img, n_query):
+                pass
+            elif tuple(scores.shape) == (n_query, n_img):
+                scores = scores.transpose(0, 1)
+            elif scores.numel() == n_img * n_query:
+                scores = scores.reshape(n_img, n_query)
+            else:
+                return None
+        else:
+            if scores.shape[0] == n_img and scores.shape[1] == n_query:
+                # Collapse trailing class/feature dimensions. This is useful for
+                # tensors such as [N, Q, C]; if logits are class-wise, max over C
+                # is closer to detection confidence than mean over C.
+                scores = scores.reshape(n_img, n_query, -1).max(-1).values
+            else:
+                return None
 
-        if scores.shape[:2] != pred_masks.shape[:2]:
-            raise ValueError(
-                "Prediction score shape mismatch: "
-                f"scores={tuple(scores.shape)} pred_masks={tuple(pred_masks.shape)}"
-            )
-
+        if force_sigmoid:
+            return torch.sigmoid(scores)
         return self._to_probabilities(scores)
+
+    def _try_postprocessed_scores(
+        self,
+        preds: Dict[str, Any],
+        pred_masks: torch.Tensor,
+        find_stages: Any = None,
+        find_metadatas: Optional[List[Dict]] = None,
+        model: Any = None,
+        batch: Any = None,
+        key: Optional[str] = None,
+    ) -> Optional[torch.Tensor]:
+        """Try to recover COCO-style prediction["scores"] when present.
+
+        This supports common already-postprocessed containers, but deliberately
+        avoids guessing how to call an arbitrary postprocessor unless it exposes
+        a compatible process_results method. COCO evaluation itself receives
+        these postprocessed predictions from CocoEvaluator.postprocessor.
+        """
+        direct = self._scores_from_coco_style_container(preds, pred_masks)
+        if direct is not None:
+            return direct
+
+        for container_key in ("predictions", "processed_results", "postprocessed", "coco_predictions", "results"):
+            value = preds.get(container_key, None)
+            direct = self._scores_from_coco_style_container(value, pred_masks)
+            if direct is not None:
+                return direct
+
+        # Best-effort attempt for stacks where the model owns the same
+        # postprocessor used by COCO evaluation. We only try very common calling
+        # conventions and ignore failures to keep the meter non-invasive.
+        postprocessors = []
+        for attr in ("postprocessor", "post_processor", "coco_postprocessor", "evaluator_postprocessor"):
+            pp = getattr(model, attr, None) if model is not None else None
+            if pp is not None:
+                postprocessors.append(pp)
+        for pp in postprocessors:
+            process_results = getattr(pp, "process_results", None)
+            if process_results is None:
+                continue
+            for args in (
+                (find_stages, find_metadatas, batch, key),
+                (find_stages, find_metadatas, batch),
+                (find_stages, batch),
+                (preds, batch),
+                (preds,),
+            ):
+                try:
+                    processed = process_results(*args)
+                except Exception:
+                    continue
+                direct = self._scores_from_coco_style_container(processed, pred_masks)
+                if direct is not None:
+                    return direct
+        return None
+
+    def _scores_from_coco_style_container(
+        self,
+        container: Any,
+        pred_masks: torch.Tensor,
+    ) -> Optional[torch.Tensor]:
+        """Extract scores from COCO-style dict/list predictions if aligned."""
+        if container is None:
+            return None
+        n_img, n_query = int(pred_masks.shape[0]), int(pred_masks.shape[1])
+
+        per_image: List[Any]
+        if isinstance(container, dict):
+            if "scores" in container:
+                return self._normalize_score_tensor(container["scores"], pred_masks)
+            # COCO postprocessors often return {image_id: {"scores": ...}}.
+            values = list(container.values())
+            if values and all(isinstance(v, dict) and "scores" in v for v in values):
+                per_image = values
+            else:
+                return None
+        elif isinstance(container, (list, tuple)) and all(isinstance(v, dict) and "scores" in v for v in container):
+            per_image = list(container)
+        else:
+            return None
+
+        if len(per_image) != n_img:
+            return None
+
+        rows = []
+        for item in per_image:
+            scores = item["scores"]
+            if not isinstance(scores, torch.Tensor):
+                scores = torch.as_tensor(scores, dtype=pred_masks.dtype, device=pred_masks.device)
+            else:
+                scores = scores.to(device=pred_masks.device, dtype=pred_masks.dtype)
+            scores = scores.flatten()
+            if scores.numel() != n_query:
+                # Variable-length postprocessed detections cannot be aligned back
+                # to raw query slots without the matching indices, so do not use
+                # them for query-level threshold sweeps.
+                return None
+            rows.append(scores)
+
+        return self._to_probabilities(torch.stack(rows, dim=0))
+
+    def _mask_confidence_scores(self, pred_masks: torch.Tensor) -> torch.Tensor:
+        """Last-resort per-query confidence from the mask logits themselves."""
+        if pred_masks.numel() == 0:
+            return torch.empty(pred_masks.shape[:2], dtype=pred_masks.dtype, device=pred_masks.device)
+        probs = self._to_probabilities(pred_masks.float())
+        return probs.flatten(2).max(dim=-1).values
 
     def _to_probabilities(self, tensor: torch.Tensor) -> torch.Tensor:
         """Convert logits-like tensors to probabilities when values are outside [0, 1]."""
@@ -693,6 +940,9 @@ class SegmentationMeter:
             results[f"{self.name}/score_mean"] = float(self._score_sum / self._score_count)
         results[f"{self.name}/score_count"] = float(self._score_count)
         results[f"{self.name}/score_source_missing"] = float(self._score_source_missing)
+        results[f"{self.name}/score_source_tensor"] = float(self._score_source_tensor)
+        results[f"{self.name}/score_source_postprocessed"] = float(self._score_source_postprocessed)
+        results[f"{self.name}/score_source_mask_confidence"] = float(self._score_source_mask_confidence)
         results[f"{self.name}/score_threshold"] = float(self.score_threshold)
         results[f"{self.name}/mask_threshold"] = float(self.mask_threshold)
 
