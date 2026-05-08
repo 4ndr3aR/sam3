@@ -53,25 +53,18 @@ class SegmentationMeter:
         score_threshold: float = 0.3,
         mask_threshold: float = 0.5,
         name: str = "segmentation",
-        score_threshold_buckets: Optional[Sequence[float]] = None,
     ):
         """
         Args:
             iou_threshold: Minimum IoU for a prediction to count as a true positive.
-            score_threshold: Minimum prediction score/objectness probability used for the
-                backward-compatible headline metrics.
+            score_threshold: Minimum prediction score/objectness probability.
             mask_threshold: Threshold applied after converting mask logits to probabilities.
             name: Name prefix for metrics.
-            score_threshold_buckets: Optional score thresholds for diagnostic
-                precision/recall/F1 sweeps. Defaults to 0.1, 0.2, ..., 0.9.
         """
         self.iou_threshold = iou_threshold
         self.score_threshold = score_threshold
         self.mask_threshold = mask_threshold
         self.name = name
-        if score_threshold_buckets is None:
-            score_threshold_buckets = tuple(round(0.1 * i, 1) for i in range(1, 10))
-        self.score_threshold_buckets = tuple(float(v) for v in score_threshold_buckets)
         self.reset()
 
     def reset(self):
@@ -83,14 +76,6 @@ class SegmentationMeter:
         self._true_positives = 0
         self._false_positives = 0
         self._false_negatives = 0
-
-        # Score-threshold sweep for detection-style counts. These counters are
-        # intentionally separate from the headline metrics above so existing
-        # logging/checkpointing code remains backward compatible.
-        self._threshold_stats = {
-            threshold: {"tp": 0, "fp": 0, "fn": 0}
-            for threshold in self.score_threshold_buckets
-        }
 
         # Per-image statistics for detailed reporting
         self._image_ious: List[float] = []
@@ -202,31 +187,8 @@ class SegmentationMeter:
                         f"pred={tuple(pred_img_masks.shape)} gt_hw={target_hw}"
                     )
 
-            # Headline metrics keep the historical behavior controlled by
-            # self.score_threshold.
-            pred_img_masks_filtered, img_scores_filtered = self._filter_predictions(
-                pred_img_masks,
-                img_scores,
-                score_threshold=self.score_threshold,
-            )
-            self._process_image(
-                gt_masks=gt_img_masks,
-                pred_masks=pred_img_masks_filtered,
-                scores=img_scores_filtered,
-            )
-
-            # Diagnostic precision/recall/F1 sweep. We use the same resized masks
-            # and the same greedy IoU matching, changing only the score threshold.
-            for threshold in self.score_threshold_buckets:
-                tp, fp, fn = self._compute_match_counts(
-                    gt_masks=gt_img_masks,
-                    pred_masks=pred_img_masks,
-                    scores=img_scores,
-                    score_threshold=threshold,
-                )
-                self._threshold_stats[threshold]["tp"] += tp
-                self._threshold_stats[threshold]["fp"] += fp
-                self._threshold_stats[threshold]["fn"] += fn
+            pred_img_masks, img_scores = self._filter_predictions(pred_img_masks, img_scores)
+            self._process_image(gt_masks=gt_img_masks, pred_masks=pred_img_masks, scores=img_scores)
 
     def _get_stage_targets(self, batch: Any, key: str):
         # Get ground truth masks from batch.find_targets[stage].segments
@@ -376,7 +338,6 @@ class SegmentationMeter:
         self,
         pred_masks: torch.Tensor,
         scores: torch.Tensor,
-        score_threshold: Optional[float] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if pred_masks.dim() != 3:
             raise ValueError(f"Expected pred_masks [N,H,W], got {tuple(pred_masks.shape)}")
@@ -387,10 +348,7 @@ class SegmentationMeter:
                 f"Prediction count mismatch: pred_masks={tuple(pred_masks.shape)} scores={tuple(scores.shape)}"
             )
 
-        if score_threshold is None:
-            score_threshold = self.score_threshold
-
-        keep = scores >= score_threshold
+        keep = scores >= self.score_threshold
         if keep.any():
             return pred_masks[keep], scores[keep]
 
@@ -403,76 +361,6 @@ class SegmentationMeter:
         mask = mask.float()
         mask = self._to_probabilities(mask)
         return mask >= self.mask_threshold
-
-    def _compute_match_counts(
-        self,
-        gt_masks: List[torch.Tensor],
-        pred_masks: torch.Tensor,
-        scores: torch.Tensor,
-        score_threshold: float,
-    ) -> Tuple[int, int, int]:
-        """Return TP/FP/FN for one image at a given score threshold.
-
-        This uses the same greedy one-to-one IoU matching as _process_image, but
-        it does not update IoU, Dice, pixel-accuracy, or pixel-count accumulators.
-        It is meant to sample the precision/recall/F1 trade-off induced by the
-        prediction score threshold.
-        """
-        pred_masks, scores = self._filter_predictions(
-            pred_masks,
-            scores,
-            score_threshold=score_threshold,
-        )
-
-        if len(gt_masks) == 0:
-            return 0, int(pred_masks.shape[0]), 0
-
-        if pred_masks.shape[0] == 0:
-            return 0, 0, len(gt_masks)
-
-        pred_binary = self._ensure_bool_mask(pred_masks)
-        if pred_binary.dim() != 3:
-            raise ValueError(f"Expected binary pred masks [N,H,W], got {tuple(pred_binary.shape)}")
-
-        sorted_indices = torch.argsort(scores, descending=True)
-        matched_preds = set()
-        tp = 0
-        fn = 0
-
-        for gt_mask in gt_masks:
-            gt_bool = self._ensure_bool_mask(gt_mask)
-            best_iou = -1.0
-            best_pred_idx = -1
-
-            for pred_idx_t in sorted_indices:
-                pred_idx = int(pred_idx_t.item())
-                if pred_idx in matched_preds:
-                    continue
-
-                pred_mask = pred_binary[pred_idx]
-                if gt_bool.shape != pred_mask.shape:
-                    raise RuntimeError(
-                        "Shape mismatch after normalization/resizing: "
-                        f"gt={tuple(gt_bool.shape)} pred={tuple(pred_mask.shape)}"
-                    )
-
-                intersection = (gt_bool & pred_mask).sum().float()
-                union = (gt_bool | pred_mask).sum().float()
-                iou = (intersection / union) if union > 0 else torch.tensor(0.0, device=intersection.device)
-                iou_value = float(iou.item())
-
-                if iou_value > best_iou:
-                    best_iou = iou_value
-                    best_pred_idx = pred_idx
-
-            if best_iou >= self.iou_threshold and best_pred_idx >= 0:
-                matched_preds.add(best_pred_idx)
-                tp += 1
-            else:
-                fn += 1
-
-        fp = int(pred_masks.shape[0]) - len(matched_preds)
-        return tp, fp, fn
 
     def _process_image(
         self,
@@ -631,36 +519,6 @@ class SegmentationMeter:
         results[f"{self.name}/false_negatives"] = float(fn)
         results[f"{self.name}/score_threshold"] = float(self.score_threshold)
         results[f"{self.name}/mask_threshold"] = float(self.mask_threshold)
-
-        best_f1 = -1.0
-        best_threshold = 0.0
-        for threshold in self.score_threshold_buckets:
-            stats = self._threshold_stats[threshold]
-            cur_tp = stats["tp"]
-            cur_fp = stats["fp"]
-            cur_fn = stats["fn"]
-            cur_precision = cur_tp / (cur_tp + cur_fp) if (cur_tp + cur_fp) > 0 else 0.0
-            cur_recall = cur_tp / (cur_tp + cur_fn) if (cur_tp + cur_fn) > 0 else 0.0
-            cur_f1 = (
-                2 * cur_precision * cur_recall / (cur_precision + cur_recall)
-                if (cur_precision + cur_recall) > 0
-                else 0.0
-            )
-            threshold_key = f"threshold_{threshold:.1f}"
-            results[f"{self.name}/{threshold_key}/precision"] = cur_precision
-            results[f"{self.name}/{threshold_key}/recall"] = cur_recall
-            results[f"{self.name}/{threshold_key}/F1"] = cur_f1
-            results[f"{self.name}/{threshold_key}/true_positives"] = float(cur_tp)
-            results[f"{self.name}/{threshold_key}/false_positives"] = float(cur_fp)
-            results[f"{self.name}/{threshold_key}/false_negatives"] = float(cur_fn)
-
-            if cur_f1 > best_f1:
-                best_f1 = cur_f1
-                best_threshold = threshold
-
-        if best_f1 >= 0.0:
-            results[f"{self.name}/best_threshold_F1"] = best_f1
-            results[f"{self.name}/best_threshold"] = float(best_threshold)
 
         return results
 
