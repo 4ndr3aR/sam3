@@ -383,9 +383,11 @@ class SegmentationMeter:
         score_key_fragments = (
             "score",
             "objectness",
+            "presence",
             "confidence",
             "conf",
             "prob",
+            "logit",
         )
         bad_key_fragments = (
             "mask",
@@ -429,13 +431,24 @@ class SegmentationMeter:
             force_sigmoid = "logit" in lower_path
             normalized = self._normalize_score_tensor(obj, pred_masks, force_sigmoid=force_sigmoid)
             if normalized is not None:
-                # Prefer explicit objectness/confidence over generic scores.
+                # Prefer explicit presence/objectness logits over generic scores.
+                # In the raw model output used here, COCO-style detection scores
+                # are usually produced later by a postprocessor. The closest raw
+                # per-query confidence is the presence/objectness logit.
                 priority = 0
-                if "objectness" in lower_path:
+                if lower_path.endswith("presence_logit_dec"):
+                    priority -= 60
+                elif lower_path.endswith("presence_logit"):
+                    priority -= 55
+                elif "presence" in lower_path and "logit" in lower_path:
+                    priority -= 50
+                elif "objectness" in lower_path:
+                    priority -= 40
+                elif "confidence" in lower_path or lower_path.endswith("conf"):
                     priority -= 20
-                if "confidence" in lower_path or lower_path.endswith("conf"):
+                elif lower_path.endswith("scores") or lower_path.endswith("score"):
                     priority -= 10
-                if lower_path.endswith("scores") or lower_path.endswith("score"):
+                elif lower_path.endswith("pred_logits"):
                     priority -= 5
                 priority += len(lower_path)
                 candidates.append((priority, path, normalized))
