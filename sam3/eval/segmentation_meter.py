@@ -85,12 +85,21 @@ class SegmentationMeter:
         self._false_negatives = 0
 
         # Score-threshold sweep for detection-style counts. These counters are
-        # intentionally separate from the headline metrics above so existing
-        # logging/checkpointing code remains backward compatible.
+        # separate from the headline metrics above so existing logging and
+        # checkpointing code remains backward compatible.
         self._threshold_stats = {
-            threshold: {"tp": 0, "fp": 0, "fn": 0}
+            threshold: {"tp": 0, "fp": 0, "fn": 0, "kept": 0}
             for threshold in self.score_threshold_buckets
         }
+
+        # Lightweight diagnostics to make score-threshold pathologies visible.
+        # If score_source_missing is positive, the meter is assigning score=1
+        # to every query, so every threshold bucket will be identical.
+        self._score_source_missing = 0
+        self._score_count = 0
+        self._score_sum = 0.0
+        self._score_min = float("inf")
+        self._score_max = float("-inf")
 
         # Per-image statistics for detailed reporting
         self._image_ious: List[float] = []
@@ -202,6 +211,8 @@ class SegmentationMeter:
                         f"pred={tuple(pred_img_masks.shape)} gt_hw={target_hw}"
                     )
 
+            self._update_score_diagnostics(img_scores)
+
             # Headline metrics keep the historical behavior controlled by
             # self.score_threshold.
             pred_img_masks_filtered, img_scores_filtered = self._filter_predictions(
@@ -218,7 +229,7 @@ class SegmentationMeter:
             # Diagnostic precision/recall/F1 sweep. We use the same resized masks
             # and the same greedy IoU matching, changing only the score threshold.
             for threshold in self.score_threshold_buckets:
-                tp, fp, fn = self._compute_match_counts(
+                tp, fp, fn, kept = self._compute_match_counts(
                     gt_masks=gt_img_masks,
                     pred_masks=pred_img_masks,
                     scores=img_scores,
@@ -227,6 +238,7 @@ class SegmentationMeter:
                 self._threshold_stats[threshold]["tp"] += tp
                 self._threshold_stats[threshold]["fp"] += fp
                 self._threshold_stats[threshold]["fn"] += fn
+                self._threshold_stats[threshold]["kept"] += kept
 
     def _get_stage_targets(self, batch: Any, key: str):
         # Get ground truth masks from batch.find_targets[stage].segments
@@ -313,6 +325,10 @@ class SegmentationMeter:
                 break
 
         if scores is None:
+            # No objectness/score tensor was exposed by the model output. In this
+            # fallback every prediction slot is considered equally confident, so
+            # all score-threshold buckets will keep the same predictions.
+            self._score_source_missing += int(pred_masks.shape[0] * pred_masks.shape[1])
             return torch.ones(
                 pred_masks.shape[:2],
                 dtype=pred_masks.dtype,
@@ -404,17 +420,27 @@ class SegmentationMeter:
         mask = self._to_probabilities(mask)
         return mask >= self.mask_threshold
 
+    def _update_score_diagnostics(self, scores: torch.Tensor) -> None:
+        """Accumulate score-distribution diagnostics for sanity checks."""
+        if scores.numel() == 0:
+            return
+        detached = scores.detach().float()
+        self._score_count += int(detached.numel())
+        self._score_sum += float(detached.sum().item())
+        self._score_min = min(self._score_min, float(detached.min().item()))
+        self._score_max = max(self._score_max, float(detached.max().item()))
+
     def _compute_match_counts(
         self,
         gt_masks: List[torch.Tensor],
         pred_masks: torch.Tensor,
         scores: torch.Tensor,
         score_threshold: float,
-    ) -> Tuple[int, int, int]:
-        """Return TP/FP/FN for one image at a given score threshold.
+    ) -> Tuple[int, int, int, int]:
+        """Return TP/FP/FN and number of kept predictions for one threshold.
 
         This uses the same greedy one-to-one IoU matching as _process_image, but
-        it does not update IoU, Dice, pixel-accuracy, or pixel-count accumulators.
+        does not update IoU, Dice, pixel-accuracy, or pixel-count accumulators.
         It is meant to sample the precision/recall/F1 trade-off induced by the
         prediction score threshold.
         """
@@ -423,12 +449,13 @@ class SegmentationMeter:
             scores,
             score_threshold=score_threshold,
         )
+        kept = int(pred_masks.shape[0])
 
         if len(gt_masks) == 0:
-            return 0, int(pred_masks.shape[0]), 0
+            return 0, kept, 0, kept
 
-        if pred_masks.shape[0] == 0:
-            return 0, 0, len(gt_masks)
+        if kept == 0:
+            return 0, 0, len(gt_masks), 0
 
         pred_binary = self._ensure_bool_mask(pred_masks)
         if pred_binary.dim() != 3:
@@ -471,8 +498,8 @@ class SegmentationMeter:
             else:
                 fn += 1
 
-        fp = int(pred_masks.shape[0]) - len(matched_preds)
-        return tp, fp, fn
+        fp = kept - len(matched_preds)
+        return tp, fp, fn, kept
 
     def _process_image(
         self,
@@ -629,38 +656,45 @@ class SegmentationMeter:
         results[f"{self.name}/true_positives"] = float(tp)
         results[f"{self.name}/false_positives"] = float(fp)
         results[f"{self.name}/false_negatives"] = float(fn)
-        results[f"{self.name}/score_threshold"] = float(self.score_threshold)
-        results[f"{self.name}/mask_threshold"] = float(self.mask_threshold)
 
+        best_threshold = None
         best_f1 = -1.0
-        best_threshold = 0.0
         for threshold in self.score_threshold_buckets:
             stats = self._threshold_stats[threshold]
-            cur_tp = stats["tp"]
-            cur_fp = stats["fp"]
-            cur_fn = stats["fn"]
-            cur_precision = cur_tp / (cur_tp + cur_fp) if (cur_tp + cur_fp) > 0 else 0.0
-            cur_recall = cur_tp / (cur_tp + cur_fn) if (cur_tp + cur_fn) > 0 else 0.0
-            cur_f1 = (
-                2 * cur_precision * cur_recall / (cur_precision + cur_recall)
-                if (cur_precision + cur_recall) > 0
+            bucket_tp = stats["tp"]
+            bucket_fp = stats["fp"]
+            bucket_fn = stats["fn"]
+            bucket_precision = bucket_tp / (bucket_tp + bucket_fp) if (bucket_tp + bucket_fp) > 0 else 0.0
+            bucket_recall = bucket_tp / (bucket_tp + bucket_fn) if (bucket_tp + bucket_fn) > 0 else 0.0
+            bucket_f1 = (
+                2 * bucket_precision * bucket_recall / (bucket_precision + bucket_recall)
+                if (bucket_precision + bucket_recall) > 0
                 else 0.0
             )
-            threshold_key = f"threshold_{threshold:.1f}"
-            results[f"{self.name}/{threshold_key}/precision"] = cur_precision
-            results[f"{self.name}/{threshold_key}/recall"] = cur_recall
-            results[f"{self.name}/{threshold_key}/F1"] = cur_f1
-            results[f"{self.name}/{threshold_key}/true_positives"] = float(cur_tp)
-            results[f"{self.name}/{threshold_key}/false_positives"] = float(cur_fp)
-            results[f"{self.name}/{threshold_key}/false_negatives"] = float(cur_fn)
-
-            if cur_f1 > best_f1:
-                best_f1 = cur_f1
+            key_prefix = f"{self.name}/threshold_{threshold:.1f}"
+            results[f"{key_prefix}/precision"] = bucket_precision
+            results[f"{key_prefix}/recall"] = bucket_recall
+            results[f"{key_prefix}/F1"] = bucket_f1
+            results[f"{key_prefix}/true_positives"] = float(bucket_tp)
+            results[f"{key_prefix}/false_positives"] = float(bucket_fp)
+            results[f"{key_prefix}/false_negatives"] = float(bucket_fn)
+            results[f"{key_prefix}/kept_predictions"] = float(stats["kept"])
+            if bucket_f1 > best_f1:
+                best_f1 = bucket_f1
                 best_threshold = threshold
 
-        if best_f1 >= 0.0:
-            results[f"{self.name}/best_threshold_F1"] = best_f1
+        if best_threshold is not None:
             results[f"{self.name}/best_threshold"] = float(best_threshold)
+            results[f"{self.name}/best_threshold_F1"] = float(best_f1)
+
+        if self._score_count > 0:
+            results[f"{self.name}/score_min"] = float(self._score_min)
+            results[f"{self.name}/score_max"] = float(self._score_max)
+            results[f"{self.name}/score_mean"] = float(self._score_sum / self._score_count)
+        results[f"{self.name}/score_count"] = float(self._score_count)
+        results[f"{self.name}/score_source_missing"] = float(self._score_source_missing)
+        results[f"{self.name}/score_threshold"] = float(self.score_threshold)
+        results[f"{self.name}/mask_threshold"] = float(self.mask_threshold)
 
         return results
 
