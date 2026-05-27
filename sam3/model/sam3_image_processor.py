@@ -81,12 +81,18 @@ class Sam3Processor:
         if not isinstance(images, list):
             raise ValueError("Images must be a list of PIL images or tensors")
         assert len(images) > 0, "Images list must not be empty"
-        assert isinstance(images[0], PIL.Image.Image), (
+        assert isinstance(images[0], PIL.Image.Image) or torch.is_tensor(images[0]), (
             "Images must be a list of PIL images"
         )
 
-        state["original_heights"] = [image.height for image in images]
-        state["original_widths"] = [image.width for image in images]
+        # Save heights and widths when images is a list of PIL Images
+        if isinstance(images[0], PIL.Image.Image):
+            state["original_heights"] = [image.height    for image in images]
+            state["original_widths"]  = [image.width     for image in images]
+        elif torch.is_tensor(images[0]):
+            # height, width = image.shape[-2:]
+            state["original_heights"] = [image.shape[-2] for image in images]
+            state["original_widths"]  = [image.shape[-1] for image in images]
 
         images = [
             self.transform(v2.functional.to_image(image).to(self.device))
